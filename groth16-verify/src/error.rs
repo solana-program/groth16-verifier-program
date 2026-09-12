@@ -31,4 +31,6 @@ pub enum Groth16Error {
     InvalidAccountData,
     /// An account's discriminator is not the one expected.
     WrongDiscriminator,
+    /// A key has identity α, β, γ or δ and cannot be published.
+    IdentityKeyElement,
 }

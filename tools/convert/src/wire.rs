@@ -165,6 +165,12 @@ impl OnChainKey {
         Ok(rebuilt)
     }
 
+    /// Checks the same point and identity rules as on-chain Publish.
+    /// Conversion alone does not require a publishable key.
+    pub fn validate_for_publish(&self) -> Result<(), solana_groth16_verify::Groth16Error> {
+        solana_groth16_verify::VerifyingKey::from_body(&self.body)?.validate_for_publish()
+    }
+
     pub fn body(&self) -> &[u8] {
         &self.body
     }
@@ -311,6 +317,47 @@ mod tests {
             fr_from_bytes(&solana_groth16_verify::constants::FR_MODULUS),
             Err(ConvertError::NonCanonicalField)
         );
+    }
+
+    #[test]
+    fn publish_validation_matches_key_point_rules() {
+        use solana_groth16_verify::Groth16Error;
+        let g1 = G1Projective::generator().into_affine();
+        let g2 = G2Projective::generator().into_affine();
+        let key = OnChainKey::new(&g1, &g2, &g2, &g2, &[G1Affine::identity(), g1]).unwrap();
+        key.validate_for_publish().unwrap();
+
+        for (offset, size) in [
+            (VK_ALPHA_OFFSET, G1_SIZE),
+            (VK_NEG_BETA_OFFSET, G2_SIZE),
+            (VK_NEG_GAMMA_OFFSET, G2_SIZE),
+            (VK_NEG_DELTA_OFFSET, G2_SIZE),
+        ] {
+            let mut bad = key.clone();
+            bad.body[offset..offset + size].fill(0);
+            assert_eq!(
+                bad.validate_for_publish(),
+                Err(Groth16Error::IdentityKeyElement)
+            );
+        }
+        // Both the pairing-validated IC₀ and addition-validated IC₁ must decode.
+        for offset in [VK_IC_OFFSET, VK_IC_OFFSET + G1_SIZE] {
+            let mut bad = key.clone();
+            bad.body[offset..offset + G1_SIZE].fill(0xff);
+            assert_eq!(bad.validate_for_publish(), Err(Groth16Error::InvalidPoint));
+        }
+        // A point on the twist outside G2's prime-order subgroup must fail too.
+        let outside = (0u64..)
+            .find_map(|i| {
+                let point = G2Affine::get_point_from_x_unchecked(
+                    Fq2::new(Fq::from(i), Fq::from(1u64)),
+                    false,
+                )?;
+                (!point.is_in_correct_subgroup_assuming_on_curve()).then_some(point)
+            })
+            .unwrap();
+        let bad = OnChainKey::new(&g1, &outside, &g2, &g2, &[g1]).unwrap();
+        assert_eq!(bad.validate_for_publish(), Err(Groth16Error::InvalidPoint));
     }
 
     #[test]

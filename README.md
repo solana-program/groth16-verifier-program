@@ -240,6 +240,12 @@ A different verifying key is a different address. There is no upgrade path for
 a key, by design — upgrading a circuit means publishing a new key at its new
 address and pointing callers at it.
 
+Clients can call `OnChainKey::validate_for_publish()` before uploading to check
+exactly the point and identity rules enforced by `Publish`. Conversion alone
+checks the source format and does not require a publishable key. Inline users
+can call `VerifyingKey::validate_for_publish()` once when accepting a key;
+`verify()` does not repeat this registration-time validation.
+
 ### Trust assumptions
 
 The commitment above holds only as long as the program's own code holds. The

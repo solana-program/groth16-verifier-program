@@ -51,3 +51,17 @@ pub(crate) fn drain_and_close(
     from.set_lamports(0);
     from.close()
 }
+
+/// Parses an initialized staging account and checks its recorded authority.
+/// Processors check ownership before borrowing and retain control of the borrow.
+pub(crate) fn authorized_staging<'a>(
+    data: &'a [u8],
+    authority: &AccountView,
+) -> Result<(solana_groth16_verify::state::StagingHeader, &'a [u8]), ProgramError> {
+    let (header, body) = solana_groth16_verify::state::read_staging_account(data)
+        .map_err(crate::error::map_groth16)?;
+    if header.authority != *authority.address().as_array() {
+        return Err(ProgramError::IncorrectAuthority);
+    }
+    Ok((header, body))
+}

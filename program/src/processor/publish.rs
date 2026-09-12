@@ -27,12 +27,7 @@ use {
     },
     pinocchio_system::instructions::{Allocate, Assign, Transfer},
     solana_groth16_verify::{
-        constants::{G1_SIZE, PAIRING_ELEMENT_SIZE},
-        state::{
-            key_account_len, read_staging_account, write_key_header, KeyHeader, KEY_HEADER_LEN,
-            VK_SEED_PREFIX,
-        },
-        syscall::{g1_add, pairing_validate_points},
+        state::{key_account_len, write_key_header, KeyHeader, KEY_HEADER_LEN, VK_SEED_PREFIX},
         VerifyingKey,
     },
 };
@@ -60,15 +55,12 @@ pub fn process(
 
     // --- 1. staging header ------------------------------------------------------
     let staging_data = staging.try_borrow()?;
-    let (header, body) = read_staging_account(&staging_data).map_err(map_groth16)?;
-    if header.authority != *authority.address().as_array() {
-        return Err(ProgramError::IncorrectAuthority);
-    }
+    let (header, body) = processor::authorized_staging(&staging_data, authority)?;
     let n = header.num_public_inputs;
     let vk = VerifyingKey::from_body_with_len(body, n).map_err(map_groth16)?;
 
     // --- 2. validate every point ------------------------------------------------
-    validate_key_points(&vk)?;
+    vk.validate_for_publish().map_err(map_groth16)?;
 
     // --- 3. address -------------------------------------------------------------
     let hash = sha256(body);
@@ -103,48 +95,6 @@ pub fn process(
     drop(staging_data);
 
     processor::drain_and_close(staging, authority)
-}
-
-/// Validates every key point through a syscall that performs the full check.
-///
-/// One 3-pair pairing call covers `α`, `IC₀` and the three G2 points —
-/// pairing is the only `alt_bn128` opcode whose G2 deserialization includes
-/// the subgroup check. `IC₁..ICₙ` go through `G1_ADD`, which deserializes with
-/// full validation and is the cheapest G1 opcode; BN254's G1 has cofactor 1,
-/// so on-curve is in-subgroup. The pairing *result* is ignored: these pairs
-/// have no reason to multiply to one.
-///
-/// `α`, `−β`, `−γ`, `−δ` must not be the identity — the equation degenerates —
-/// while any `ICᵢ` may be.
-fn validate_key_points(vk: &VerifyingKey) -> ProgramResult {
-    let alpha = vk.alpha();
-    let ic0 = vk.ic(0);
-    if is_zero(alpha)
-        || is_zero(vk.neg_beta())
-        || is_zero(vk.neg_gamma())
-        || is_zero(vk.neg_delta())
-    {
-        return Err(Groth16ProgramError::IdentityKeyElement.into());
-    }
-
-    let mut input = [0u8; 3 * PAIRING_ELEMENT_SIZE];
-    input[..PAIRING_ELEMENT_SIZE].copy_from_slice(vk.alpha_neg_beta());
-    input[PAIRING_ELEMENT_SIZE..PAIRING_ELEMENT_SIZE + G1_SIZE].copy_from_slice(ic0);
-    input[PAIRING_ELEMENT_SIZE + G1_SIZE..2 * PAIRING_ELEMENT_SIZE].copy_from_slice(vk.neg_gamma());
-    input[2 * PAIRING_ELEMENT_SIZE..2 * PAIRING_ELEMENT_SIZE + G1_SIZE].copy_from_slice(ic0);
-    input[2 * PAIRING_ELEMENT_SIZE + G1_SIZE..].copy_from_slice(vk.neg_delta());
-    pairing_validate_points(&input).map_err(map_groth16)?;
-
-    for i in 1..=vk.num_public_inputs() {
-        let ic = vk.ic(i);
-        g1_add(ic, ic).map_err(map_groth16)?;
-    }
-    Ok(())
-}
-
-#[inline(always)]
-fn is_zero(bytes: &[u8]) -> bool {
-    bytes.iter().all(|&b| b == 0)
 }
 
 /// Brings the PDA into existence at `space` bytes, owned by this program.

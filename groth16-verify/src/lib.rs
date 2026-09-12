@@ -46,6 +46,8 @@ pub mod state;
 #[cfg(feature = "verify")]
 pub mod syscall;
 #[cfg(feature = "verify")]
+mod validation;
+#[cfg(feature = "verify")]
 pub mod verifier;
 #[cfg(feature = "verify")]
 mod vk;

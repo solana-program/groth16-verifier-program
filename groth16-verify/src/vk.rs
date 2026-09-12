@@ -62,6 +62,14 @@ impl<'a> VerifyingKey<'a> {
         })
     }
 
+    /// Checks every point and rejects identity α, β, γ and δ, matching Publish.
+    ///
+    /// Constructors check only layout. Call this once before trusting an inline
+    /// key; verification does not repeat this registration-time validation.
+    pub fn validate_for_publish(&self) -> Result<(), Groth16Error> {
+        crate::validation::validate_for_publish(self)
+    }
+
     #[inline]
     pub fn body(&self) -> &'a [u8] {
         self.body

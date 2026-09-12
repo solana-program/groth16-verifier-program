@@ -11,7 +11,7 @@ use {pinocchio::error::ProgramError, solana_groth16_verify::Groth16Error};
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Groth16ProgramError {
-    // 0..=9 mirror `Groth16Error` in declaration order.
+    // Existing verification/layout codes remain stable.
     InvalidProofLength = 0,
     InvalidKeyLength = 1,
     TooManyPublicInputs = 2,
@@ -54,6 +54,7 @@ pub fn map_groth16(e: Groth16Error) -> ProgramError {
         Groth16Error::ProofInvalid => P::ProofInvalid,
         Groth16Error::InvalidAccountData => P::InvalidAccountData,
         Groth16Error::WrongDiscriminator => P::WrongDiscriminator,
+        Groth16Error::IdentityKeyElement => P::IdentityKeyElement,
     };
     code.into()
 }

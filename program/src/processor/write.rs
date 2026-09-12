@@ -7,12 +7,9 @@
 //! `offset + len`.
 
 use {
-    crate::{
-        error::{map_groth16, Groth16ProgramError},
-        processor,
-    },
+    crate::{error::Groth16ProgramError, processor},
     pinocchio::{error::ProgramError, AccountView, Address, ProgramResult},
-    solana_groth16_verify::state::{read_staging_account, staging_body_mut},
+    solana_groth16_verify::state::STAGING_HEADER_LEN,
 };
 
 pub fn process(
@@ -33,12 +30,8 @@ pub fn process(
     let offset = u32::from_le_bytes(offset.try_into().unwrap()) as usize;
 
     let mut data = staging.try_borrow_mut()?;
-    let (header, _) = read_staging_account(&data).map_err(map_groth16)?;
-    if header.authority != *authority.address().as_array() {
-        return Err(ProgramError::IncorrectAuthority);
-    }
-
-    let body = staging_body_mut(&mut data).map_err(map_groth16)?;
+    processor::authorized_staging(&data, authority)?;
+    let body = &mut data[STAGING_HEADER_LEN..];
     let end = offset
         .checked_add(bytes.len())
         .filter(|&end| end <= body.len())
