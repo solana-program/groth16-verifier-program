@@ -1,0 +1,26 @@
+[package]
+name = "groth16-program"
+version = "0.1.0"
+edition = "2021"
+description = "Pinocchio SBF program: content-addressed verifying-key registry and Groth16 verification"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pinocchio = { workspace = true, features = ["cpi"] }
+pinocchio-system = { workspace = true }
+# `instruction` must stay off here: its builders pull in `std`, whose panic
+# handler collides with `nostd_panic_handler!` in the SBF build.
+groth16-verify = { workspace = true, features = ["verify"] }
+# `sol_sha256` on-chain, `sha2` on the host, behind one `hashv`.
+solana-sha256-hasher = { version = "3.1.0", features = ["sha2"] }
+
+# `find_program_address` is a syscall on SBF; off-chain it needs the
+# `curve25519` implementation so the lib compiles on the host by itself.
+[target.'cfg(not(target_os = "solana"))'.dependencies]
+solana-address = { workspace = true, features = ["curve25519"] }
+
+[lints]
+workspace = true
