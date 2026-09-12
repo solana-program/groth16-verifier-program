@@ -1,0 +1,33 @@
+[package]
+name = "groth16-verify"
+version = "0.1.0"
+edition = "2021"
+description = "Stateless, allocation-free Groth16 (BN254) verifier for Solana programs"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = ["verify", "instruction"]
+# The on-chain verifier: zero-copy views over key/proof bytes, the MSM, and
+# the pairing check. Uses the `sol_alt_bn128_group_op` syscall on-chain and a
+# host implementation (via `solana-bn254`) off-chain so tests can run natively.
+verify = ["dep:solana-bn254"]
+# Client-side instruction builders and the program's canonical address.
+instruction = ["dep:solana-instruction", "dep:solana-address", "dep:sha2"]
+
+[dependencies]
+pinocchio = { workspace = true }
+solana-instruction = { workspace = true, optional = true }
+# `curve25519` unlocks the host implementation of `find_program_address`.
+solana-address = { workspace = true, optional = true, features = ["curve25519"] }
+sha2 = { workspace = true, optional = true }
+
+# Host implementation of the group operations. Never compiled for SBF, where
+# the raw syscall is used instead.
+[target.'cfg(not(target_os = "solana"))'.dependencies]
+solana-bn254 = { version = "3.2.1", optional = true }
+
+[lints]
+workspace = true
