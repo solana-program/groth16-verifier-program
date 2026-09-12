@@ -17,24 +17,46 @@ kilobytes for what is a few kilobytes of actual key material. Nothing is shared
 between circuits.
 
 **Pass the key in instruction data.** Stateless, cheapest in compute, and the
-closest match to the [ed25519 program] this repository follows structurally. But
-a Groth16 key body is `448 + 64·(n+1)` bytes; at `n = 8` that is 1,024 bytes
-against a 1,232-byte transaction limit, and the program has no way to tell whether the key
-it was handed is the one the caller intended. That check has to happen
-somewhere, and pushing it to every caller is worse than doing it once.
+closest match to the [ed25519 program] this repository follows structurally. It
+fails on identity, not on mechanics. An Ed25519 public key *is* the identity of
+the signer; a Groth16 verifying key is a kilobyte of curve points whose identity
+is a hash of them. A program handed those bytes cannot tell whether they are the
+key the caller meant, so every caller would have to carry the expected hash,
+recompute it over the full key on every verification, and compare — a check
+that is the same for every circuit and every caller, repeated per transaction
+instead of performed once.
+
+Size is the secondary objection, and it depends on the transaction format. A
+key body is `448 + 64·(n+1)` bytes: 1,024 bytes at `n = 8`, 10,184 at the
+maximum `n = 151`. Legacy and v0 transactions are capped at 1,232 bytes, which
+leaves no room for a key beyond a handful of inputs once the 256-byte proof, the
+public inputs and the transaction envelope are counted. The v1 format
+([SIMD-0385]) raises the cap to 4,096 bytes ([SIMD-0296]) — scheduled for
+mainnet activation at epoch 1035 — so under v1 a key, proof and inputs fit in one
+transaction up to roughly `n ≈ 30`. That covers many circuits but not all, it
+requires the caller to adopt v1, which also drops address lookup tables and
+changes how compute and priority fees are declared, and it still ships the same
+kilobyte of key with every proof.
 
 **One program, one key account per circuit.** This is what the program does.
 The key lives in a PDA, written once and sealed. The PDA address plays the role
 the contract address plays on Ethereum: it names the circuit, it is stable, and
-it can be hardcoded by a consumer.
+it can be hardcoded by a consumer. The identity check is performed exactly once,
+at `Publish`, and afterwards a caller pins a circuit by pinning 32 bytes.
 
 The compute cost of the third option is not meaningfully worse than the second.
 Pinocchio maps account data into the program's address space without copying, so
 reading the key out of an account costs the same `memcpy` as reading it out of
-instruction data. What the account buys is that the key no longer competes with
-the proof for transaction bytes, and that its identity is checkable.
+instruction data. What the account buys is that the key's identity is checkable
+and checked once, and that the proof travels alone — a `Verify` transaction
+carries the 256-byte proof and `32·n` bytes of inputs and nothing else, so the
+transaction-size ceiling on `n` (about 20 under the 1,232-byte limit, see
+[cu-budget.md](cu-budget.md)) is set by the inputs alone and rises with the
+format rather than being eaten by the key.
 
 [ed25519 program]: https://github.com/solana-program/ed25519
+[SIMD-0296]: https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0296-larger-transactions.md
+[SIMD-0385]: https://solana.com/upgrades/larger-transaction-sizes
 
 ## 2. The address is the key's hash
 
@@ -65,9 +87,12 @@ is a new contract. Here it is a new address.
 
 ### Why the canonical account is never written in place
 
-A key is larger than one transaction can carry, so it has to be uploaded in
-pieces, and the question is where those pieces accumulate. Two designs were
-considered and rejected before the current one.
+A key can be larger than one transaction can carry — 10,184 bytes at the
+maximum `n = 151`, against 1,232 bytes for legacy and v0 transactions and 4,096
+for v1 — so the upload path has to allow a key to arrive in pieces, and the
+question is where those pieces accumulate. Small keys sent by a v1 client may
+fit in a single `Write`, but the design has to be correct for the ones that do
+not. Two designs were considered and rejected before the current one.
 
 *Upload directly into the canonical PDA, gated on the initializer.* Whoever
 calls `Initialize` first controls the account. Anyone can therefore squat a
@@ -269,7 +294,10 @@ is a thin dispatcher on top.
 `groth16-convert` is a separate crate rather than a feature because it pulls in
 `ark-bn254`, `ark-serialize` and `gnark`-format parsing — heavy `std`
 dependencies that have no business being reachable, even behind a disabled
-feature flag, from the crate that gets compiled into an SBF artifact.
+feature flag, from the crate that gets compiled into an SBF artifact. It lives
+under `tools/` with the bench program and the gnark fixture: the two crates a
+consumer depends on are the verifier and the program, and everything under
+`tools/` exists to produce, convert or measure inputs to them.
 
 The client-side instruction builders stay in `solana-groth16-verify` behind an
 `instruction` feature, matching the ed25519 program's arrangement, so a pure
