@@ -1,0 +1,14 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Solana
+/test-ledger/
+*-keypair.json
+
+# Go (fixture generator); the generated .bin fixtures are tracked
+/fixtures/gnark/gen/gen
+
+# Editor / tooling
+/.claude/
+.DS_Store

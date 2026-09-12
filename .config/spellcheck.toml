@@ -1,0 +1,9 @@
+[hunspell]
+use_builtin = true
+search_dirs = ["."]
+extra_dictionaries = ["spellcheck.dic"]
+# Treat the em dash (U+2014) and the right arrow (U+2192) as token separators;
+# cargo-spellcheck's default split chars cover the other dash variants but not
+# these, so a space-padded " — " or " → " would otherwise be spell-checked as
+# a word.
+tokenization_splitchars = "\",';:.!?#(){}[]|/_-‒–⁃⁻₋−⸺⸻\n…—→"
