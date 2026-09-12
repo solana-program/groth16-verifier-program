@@ -1,0 +1,17 @@
+[package]
+name = "groth16-bench"
+version = "0.1.0"
+edition = "2021"
+description = "Instrumented SBF program that isolates each Groth16 verification stage for CU measurement"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pinocchio = { workspace = true }
+groth16-verify = { workspace = true, features = ["verify"] }
+
+[lints]
+workspace = true

@@ -1217,6 +1217,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
+name = "groth16-bench"
+version = "0.1.0"
+dependencies = [
+ "groth16-verify",
+ "pinocchio",
+]
+
+[[package]]
 name = "groth16-convert"
 version = "0.1.0"
 dependencies = [
@@ -1241,6 +1249,7 @@ dependencies = [
  "ark-relations",
  "ark-snark",
  "ark-std 0.5.0",
+ "groth16-bench",
  "groth16-convert",
  "groth16-verify",
  "mollusk-svm",

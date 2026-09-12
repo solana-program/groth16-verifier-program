@@ -25,6 +25,7 @@ solana-address = { workspace = true, features = ["curve25519"] }
 [dev-dependencies]
 groth16-verify = { workspace = true, features = ["verify", "instruction"] }
 groth16-convert = { workspace = true }
+groth16-bench = { path = "../bench" }
 solana-program-error = { workspace = true }
 # Seeded RNG with a specified, version-stable output for replayable tests.
 rand_chacha = { workspace = true }

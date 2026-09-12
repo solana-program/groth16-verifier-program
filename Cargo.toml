@@ -1,5 +1,5 @@
 [workspace]
-members = ["groth16-verify", "groth16-convert", "program"]
+members = ["groth16-verify", "groth16-convert", "program", "bench"]
 resolver = "2"
 
 [workspace.lints.rust]
