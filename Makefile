@@ -15,7 +15,7 @@ path-bench = tools/bench
 make-path = $(or $(path-$1),$1)
 
 .PHONY: rust-toolchain-nightly solana-cli-version audit spellcheck \
-	build-sbf test test-host cu fixtures clippy format-check generate-clients
+	build-sbf test test-host cu fixtures coverage clippy format-check generate-clients
 
 # Read by .github/workflows/main.yml so the versions live in one place.
 rust-toolchain-nightly:
@@ -89,6 +89,14 @@ cu: build-sbf
 # Regenerate tools/fixtures/gnark/*.bin (needs Go).
 fixtures:
 	cd tools/fixtures/gnark/gen && go run .
+
+# Host line coverage (needs `cargo install cargo-llvm-cov` and the
+# `llvm-tools-preview` component). `program/src` and `tools/bench/src` only execute
+# inside the SBF VM, so they are excluded; their behaviour is covered by the
+# Mollusk tests, whose host-side effects on the library crates are counted.
+coverage: build-sbf
+	SBF_OUT_DIR=$(SBF_OUT_DIR) cargo llvm-cov --workspace --all-features \
+		--ignore-filename-regex '(program|bench)/src' $(ARGS)
 
 clippy:
 	cargo $(nightly) clippy --workspace --all-targets --all-features -- --deny=warnings $(ARGS)
