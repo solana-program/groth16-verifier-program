@@ -1,0 +1,23 @@
+[package]
+name = "groth16-convert"
+version = "0.1.0"
+edition = "2021"
+description = "Host-side bridge from gnark and arkworks Groth16 serialization to the on-chain wire format"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+groth16-verify = { workspace = true, default-features = false, features = ["verify"] }
+ark-bn254 = { workspace = true }
+ark-ec = { workspace = true }
+ark-ff = { workspace = true }
+ark-groth16 = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+ark-std = { workspace = true }
+
+[lints]
+workspace = true
