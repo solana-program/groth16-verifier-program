@@ -13,6 +13,7 @@
 //! ```
 
 pub mod arkworks;
+pub mod gnark;
 pub mod wire;
 
 pub use wire::{OnChainKey, OnChainProof};

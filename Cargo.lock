@@ -2522,6 +2522,9 @@ dependencies = [
 name = "solana-groth16-verify"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254 0.5.0",
+ "ark-groth16",
+ "groth16-convert",
  "pinocchio",
  "sha2 0.10.9",
  "solana-address 2.7.0",
