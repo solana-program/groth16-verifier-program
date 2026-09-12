@@ -200,34 +200,84 @@ whether that feature is active.
 
 ## 4. Negate on the G2 side
 
-The verification equation has to become a product of pairings equal to one
-before the single-shot pairing syscall can check it, which means negating one
-side. There are two ways to do that and they are not equally cheap.
+The Groth16 equation is `e(A, B) = e(α, β) · e(L, γ) · e(C, δ)`. The pairing
+syscall does not compute pairings and hand them back; it takes a list of pairs
+and answers one question, whether the product of their pairings is one. So the
+equation has to be rearranged into that form first, which means moving the
+right-hand side across and negating one point in each of the three moved
+pairs. Either point of a pair can carry the sign, because
+`e(−P, Q) = e(P, −Q) = e(P, Q)⁻¹`. The choice is not which negation is cheaper
+to compute — a G1 negation is one `Fq` subtraction and a G2 negation is two —
+but *when and by whom* it is computed. The target is that the program computes
+none of them.
 
-Negating the G1 side gives `e(A,B)·e(−α,β)·e(−L,γ)·e(−C,δ) = 1`. `α` is in the
-key and can be stored pre-negated, but `L` is computed on-chain and `C` comes
-from the proof, so two G1 negations remain on the hot path. Negating `A` alone
-gives `e(−A,B)·e(α,β)·e(L,γ)·e(C,δ) = 1` — one negation, better, but still one.
+There are three places the sign can go:
 
-Negating the G2 side gives
+| Negate       | Equation checked                            | Negations done by the program at `Verify`       |
+| ------------ | ------------------------------------------- | ----------------------------------------------- |
+| G1: `α, L, C` | `e(A,B)·e(−α,β)·e(−L,γ)·e(−C,δ) = 1`       | Two. `α` can be stored negated in the key, but `L` is the MSM result computed on-chain and `C` arrives in the proof. |
+| G1: `A`      | `e(−A,B)·e(α,β)·e(L,γ)·e(C,δ) = 1`          | One, unless the client submits `−A` in place of `A`. |
+| G2: `β, γ, δ` | `e(A,B)·e(α,−β)·e(L,−γ)·e(C,−δ) = 1`       | None. All three are verifying-key elements.     |
+
+The program negates the G2 side. `β`, `γ` and `δ` are fixed per circuit, so
+`groth16-convert` negates them once on the host — `y ∈ Fq2` becomes
+`(p − y₀, p − y₁)` — and `Publish` stores the negated points. The hot path
+copies bytes into the pairing buffer and does no field arithmetic outside the
+syscalls. There is no negation opcode in the `alt_bn128` syscall family, so
+any negation the program did perform would be hand-written 256-bit modular
+subtraction in SBF: cheap, but not free, and one more path to get right,
+including the identity case where `y = 0`.
+
+The second row deserves a word, because a client that submits `−A` also
+reaches zero on-chain negations. The difference is where the transformation
+lives. Negating the key happens once per circuit, at registration, and a proof
+is then verified exactly as gnark or arkworks emit it. Negating `A` happens
+once per proof, in every client, forever, and a proof taken straight from a
+prover fails to verify with no indication why. gnark's own `VerifyingKey`
+stores `gammaNeg` and `deltaNeg` for the same reason: the key is the right
+place to absorb the sign, so for gnark inputs part of the work is already
+done.
+
+**Why the check is four pairs and not three.** `α` and `β` are both fixed by
+the key, so `e(α, β)` is a per-circuit constant. Verifiers that run their own
+pairing loop exploit that: arkworks' `prepare_verifying_key` computes the
+`Fq12` element once and stores it, and verification then rearranges the
+equation to
 
 ```text
-e(A, B) · e(α, −β) · e(L, −γ) · e(C, −δ) = 1
+e(A, B) · e(L, −γ) · e(C, −δ) = e(α, β)
 ```
 
-and `β`, `γ`, `δ` are *all* verifying-key elements. Every negation moves to
-registration time, where compute is irrelevant. The hot path does zero field
-arithmetic outside the syscalls.
+pairs only the three proof-dependent terms, and compares the product against
+the stored constant. One Miller loop fewer per verification, and no `Fq12`
+arithmetic beyond a comparison.
 
-Negating a G2 point is negating its `y ∈ Fq2`, i.e. `(p − y₀, p − y₁)`, handled
-by `groth16-convert`. gnark's own `VerifyingKey` already carries `gammaNeg` and
-`deltaNeg` for the same reason, so for gnark inputs part of this is free.
+The `alt_bn128` pairing syscall cannot do this. It accepts only points and
+returns only a boolean — whether the product of the given pairs is one — so
+there is no way to hand it a precomputed `e(α, β)` and no way to read the
+three-pair product back out to compare. `α` and `β` therefore go in as points
+and are paired again on every call. The check is four pairs.
 
-One optimization that is *not* available: implementations that control the
-pairing loop precompute `e(α, β)` once and fold it into the final
-exponentiation, turning a 4-pair check into a 3-pair one. The syscall returns
-only a boolean, never an `Fq12`, so there is nowhere to put a precomputed
-value. The check is four pairs.
+This is a limitation of the syscall, not of the scheme. The BLS12-381 syscalls
+in [SIMD-0388] return the full 576-byte target-group element, and the SDK's
+`solana-bls12-381` crate already exposes it as `pairing_map`; a verifier on
+that curve could store `e(α, β)` in the key account and check three pairs
+against it with a byte comparison. Nothing equivalent exists or is proposed for
+BN254 — [SIMD-0302] adds G2 arithmetic and [SIMD-0284] added little-endian
+encodings, and neither touches the pairing output.
+
+> **TODO.** Write a SIMD adding a BN254 pairing variant that returns the
+> `Fq12` product instead of a boolean, mirroring SIMD-0388's output format.
+> With it, `Publish` would store `e(α, β)` (576 bytes) alongside the key and
+> `Verify` would drop to a 3-pair call plus a 576-byte comparison. That saves
+> one `alt_bn128_pairing_one_pair_cost_other`, 12,121 CU, on every
+> verification — about a sixth of the pairing stage, which is the dominant cost
+> for every circuit below `n = 18` (see [cu-budget.md](cu-budget.md)). It is
+> the largest remaining saving that does not require changing the scheme.
+
+[SIMD-0284]: https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0284-alt-bn128-little-endian.md
+[SIMD-0302]: https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0302-bn254-g2-syscalls.md
+[SIMD-0388]: https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0388-bls12-381-syscalls.md
 
 ## 5. Assembling the pairing input
 
