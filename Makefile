@@ -1,8 +1,8 @@
 RUST_TOOLCHAIN_NIGHTLY = nightly-2026-01-22
-SOLANA_CLI_VERSION = v3.1.10
-# v3 needs platform-tools newer than the v1.52 shipped with solana-cli 3.1.x;
-# v2 is the newest arch that toolchain builds. Override with `make SBF_ARCH=v3`.
-SBF_ARCH = v2
+SOLANA_CLI_VERSION = v4.2.2
+# solana-cli 4.2.x ships cargo-build-sbf 4.1 (platform-tools v1.54), which
+# builds SBF v3. Older toolchains stop at v2: override with `make SBF_ARCH=v2`.
+SBF_ARCH = v3
 SBF_OUT_DIR = $(PWD)/target/deploy
 
 nightly = +${RUST_TOOLCHAIN_NIGHTLY}
@@ -81,7 +81,7 @@ test-host:
 
 # Everything: build both SBF artifacts, then every test including Mollusk.
 test: build-sbf test-host
-        $(MAKE) test-program
+	$(MAKE) test-program
 
 # The CU breakdown from docs/cu-budget.md.
 cu: build-sbf

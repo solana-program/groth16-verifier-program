@@ -29,10 +29,10 @@ already expect:
 ## Build and test
 
 Host toolchain is pinned to stable `1.93.1` in `rust-toolchain.toml`. SBF
-builds use `cargo build-sbf` from solana-cli `3.1.x` (platform-tools `v1.52`),
-which supports SBF archs up to `v2`; `make SBF_ARCH=v3 …` works on newer
-toolchains. Both versions, and the nightly used for rustfmt and clippy, live at
-the top of the `Makefile` and are read from there by CI.
+builds use `cargo build-sbf` from solana-cli `4.2.2` (platform-tools `v1.54`)
+and target SBF arch `v3`; `make SBF_ARCH=v2 …` builds for older toolchains.
+Both versions, and the nightly used for rustfmt and clippy, live at the top of
+the `Makefile` and are read from there by CI.
 
 ```sh
 make test-host           # host-only tests: solana-groth16-verify + groth16-convert
