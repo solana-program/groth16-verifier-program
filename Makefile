@@ -80,7 +80,8 @@ test-host:
 	cargo test --locked -p solana-groth16-verify -p groth16-convert --all-features $(ARGS)
 
 # Everything: build both SBF artifacts, then every test including Mollusk.
-test: build-sbf test-host test-program
+test: build-sbf test-host
+        $(MAKE) test-program
 
 # The CU breakdown from docs/cu-budget.md.
 cu: build-sbf
