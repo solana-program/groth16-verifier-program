@@ -11,21 +11,18 @@
 //! 3. **A consuming program** hardcodes the advertised address, checks that
 //!    the account it was handed is that address, and CPIs `Verify`.
 //!
-//! Every transaction is executed as a real Solana message through Mollusk's
-//! `process_transaction_instructions`, so the instructions the README says
-//! must share a transaction really do share one here. Read it top to bottom;
-//! `program/tests/common` is deliberately not used for the flow itself.
+//! Every transaction is executed as a real Solana message (the harness's
+//! `run_atomic`, over Mollusk's `process_transaction_instructions`), so the
+//! instructions the README says must share a transaction really do share one
+//! here. Read it top to bottom; `program/tests/common` supplies only the
+//! harness and assertions, not the flow.
 
 mod common;
 
 use {
-    common::{assert_success, harness},
+    common::{assert_success, assert_tx_success, harness, Harness},
     groth16_convert::{arkworks, gnark, OnChainKey, OnChainProof},
-    mollusk_svm::{
-        program::keyed_account_for_system_program,
-        result::types::{TransactionProgramResult, TransactionResult},
-        Mollusk,
-    },
+    mollusk_svm::{program::keyed_account_for_system_program, result::types::TransactionResult},
     solana_account::Account,
     solana_address::Address,
     solana_groth16_verify::{
@@ -48,13 +45,9 @@ impl Ledger {
     }
 
     /// Submits one transaction and applies its effects.
-    fn submit(&mut self, mollusk: &Mollusk, instructions: &[Instruction]) -> TransactionResult {
-        let result = mollusk.process_transaction_instructions(instructions, &self.accounts);
-        assert!(
-            matches!(result.program_result, TransactionProgramResult::Success),
-            "transaction failed: {:?}",
-            result.program_result
-        );
+    fn submit(&mut self, h: &Harness, instructions: &[Instruction]) -> TransactionResult {
+        let result = h.run_atomic(instructions, &self.accounts);
+        assert_tx_success(&result);
         for (address, account) in &result.resulting_accounts {
             match self.accounts.iter_mut().find(|(a, _)| a == address) {
                 Some(slot) => slot.1 = account.clone(),
@@ -140,7 +133,7 @@ fn readme_walkthrough() {
     // sign `CreateAccount`.
     let rent = mollusk.sysvars.rent.minimum_balance(staging_account_len(n));
     let tx1 = ix::create_staging(&program_id, &payer, &authority, &staging, n as u16, rent);
-    ledger.submit(mollusk, &tx1);
+    ledger.submit(&h, &tx1);
     assert_eq!(ledger.account(&staging).owner, program_id);
     assert_eq!(ledger.account(&staging).data.len(), staging_account_len(n));
 
@@ -152,7 +145,7 @@ fn readme_walkthrough() {
     let uploads = ix::write_body(&program_id, &authority, &staging, vk.body(), CHUNK);
     assert_eq!(uploads.len(), vk.body().len().div_ceil(CHUNK));
     for write in &uploads {
-        ledger.submit(mollusk, std::slice::from_ref(write));
+        ledger.submit(&h, std::slice::from_ref(write));
     }
 
     // --- Transaction k+1: publish -------------------------------------------
@@ -172,7 +165,7 @@ fn readme_walkthrough() {
     ledger
         .accounts
         .push((advertised_key_address, Account::default()));
-    ledger.submit(mollusk, std::slice::from_ref(&publish));
+    ledger.submit(&h, std::slice::from_ref(&publish));
 
     let key_account = ledger.account(&advertised_key_address);
     assert_eq!(key_account.owner, program_id);

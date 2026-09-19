@@ -9,8 +9,9 @@ use {
     ark_ff::UniformRand,
     ark_std::rand::SeedableRng,
     common::{
-        account_of, assert_custom_error, assert_program_error, assert_success, circuit::Instance,
-        code, harness, RegisterRequest, SYSTEM_PROGRAM_ID,
+        account_of, assert_custom_error, assert_program_error, assert_success,
+        assert_tx_custom_error, assert_tx_success, circuit::Instance, code, harness, tx_account_of,
+        RegisterRequest, SYSTEM_PROGRAM_ID,
     },
     groth16_convert::OnChainKey,
     mollusk_svm::program::keyed_account_for_system_program,
@@ -207,6 +208,77 @@ fn republishing_fails_and_leaves_the_first_intact() {
     assert_eq!(account_of(&result, &key_pda), published);
 }
 
+/// `Verify` trusts a key account on ownership and discriminator alone, which
+/// is sound only if no instruction can alter a published account. Every
+/// instruction that takes a staging account is handed the published key
+/// instead — by its own authority, with every signer and writability flag it
+/// could want — and must refuse without touching it.
+#[test]
+fn published_key_is_immutable() {
+    let Some(h) = harness() else { return };
+    let key = synthetic_key(2, 7);
+    let authority = h.wallet(10_000_000_000);
+    let (key_pda, published) = {
+        let (result, key_pda) = h.register_chain(RegisterRequest::new(&key, &authority));
+        assert_success(&result);
+        (key_pda, account_of(&result, &key_pda))
+    };
+    let accounts = [
+        authority.clone(),
+        (key_pda, published.clone()),
+        keyed_account_for_system_program(),
+    ];
+    let unchanged = |result: &mollusk_svm::result::InstructionResult| {
+        let after = account_of(result, &key_pda);
+        assert_eq!(after.data, published.data, "data changed");
+        assert_eq!(after.lamports, published.lamports, "lamports changed");
+        assert_eq!(after.owner, published.owner, "owner changed");
+    };
+
+    // Write: the key discriminator is not the staging discriminator.
+    let result = h.mollusk.process_instruction(
+        &ix::write(&h.program_id, &authority.0, &key_pda, 0, &[0xff; 64]),
+        &accounts,
+    );
+    assert_custom_error(&result, code::WRONG_DISCRIMINATOR);
+    unchanged(&result);
+
+    // InitializeStaging: a key account is 32 bytes shorter than a staging
+    // account for the same n, and no other n closes a 32-byte gap in a
+    // 64-byte-stepped size, so the size check fires for every n. Were it to
+    // pass, the nonzero discriminator would fail it next.
+    for n in [0u16, 1, 2, 3, MAX_PUBLIC_INPUTS as u16] {
+        let result = h.mollusk.process_instruction(
+            &ix::initialize_staging(&h.program_id, &authority.0, &key_pda, n),
+            &accounts,
+        );
+        assert_custom_error(&result, code::STAGING_SIZE_MISMATCH);
+        unchanged(&result);
+    }
+
+    // CloseStaging: would refund the key's rent to the caller.
+    let result = h.mollusk.process_instruction(
+        &ix::close_staging(&h.program_id, &authority.0, &key_pda),
+        &accounts,
+    );
+    assert_custom_error(&result, code::WRONG_DISCRIMINATOR);
+    unchanged(&result);
+
+    // Publish, with the key as its own staging account.
+    let result = h.mollusk.process_instruction(
+        &ix::publish(
+            &h.program_id,
+            &authority.0,
+            &authority.0,
+            &key_pda,
+            &key_pda,
+        ),
+        &accounts,
+    );
+    assert_custom_error(&result, code::WRONG_DISCRIMINATOR);
+    unchanged(&result);
+}
+
 #[test]
 fn max_size_key_publishes_with_a_raised_budget_and_one_more_is_refused() {
     let Some(mut h) = harness() else { return };
@@ -290,6 +362,70 @@ fn initialize_staging_checks_size_and_refuses_reinitialization() {
         ],
     );
     assert_program_error(&result, ProgramError::AccountAlreadyInitialized);
+}
+
+/// The README's client-side rule — `create_account` and `InitializeStaging`
+/// in one transaction — only closes the window if a failing initialization
+/// also undoes the creation. Otherwise a mis-sized staging account would be
+/// left behind, program-owned and blank, for anyone to claim. Both directions
+/// are run as a real transaction, not an instruction chain.
+#[test]
+fn create_and_initialize_staging_are_atomic() {
+    let Some(h) = harness() else { return };
+    let payer = h.wallet(10_000_000_000);
+    let authority = h.wallet(10_000_000_000);
+    let staging = Address::new_unique();
+    let n = 3;
+    let accounts = [
+        payer.clone(),
+        authority.clone(),
+        (staging, Account::default()),
+        keyed_account_for_system_program(),
+    ];
+    let rent = h.rent_exempt(staging_account_len(n));
+
+    // The pair succeeds together: one transaction, both effects.
+    let result = h.run_atomic(
+        &ix::create_staging(
+            &h.program_id,
+            &payer.0,
+            &authority.0,
+            &staging,
+            n as u16,
+            rent,
+        ),
+        &accounts,
+    );
+    assert_tx_success(&result);
+    let created = tx_account_of(&result, &staging);
+    assert_eq!(created.owner, h.program_id);
+    assert_eq!(created.data.len(), staging_account_len(n));
+    assert_eq!(created.data[0], 2, "staging discriminator");
+    assert_eq!(&created.data[8..40], authority.0.as_array());
+    assert_eq!(
+        tx_account_of(&result, &payer.0).lamports,
+        payer.1.lamports - rent
+    );
+
+    // The pair fails together: create for n + 1, initialize for n. The
+    // creation is rolled back, so the account does not exist and the payer
+    // paid nothing.
+    let [create, _] = ix::create_staging(
+        &h.program_id,
+        &payer.0,
+        &authority.0,
+        &staging,
+        (n + 1) as u16,
+        h.rent_exempt(staging_account_len(n + 1)),
+    );
+    let initialize = ix::initialize_staging(&h.program_id, &authority.0, &staging, n as u16);
+    let result = h.run_atomic(&[create, initialize], &accounts);
+    assert_tx_custom_error(&result, 1, code::STAGING_SIZE_MISMATCH);
+    let rolled_back = tx_account_of(&result, &staging);
+    assert_eq!(rolled_back.lamports, 0);
+    assert!(rolled_back.data.is_empty());
+    assert_eq!(rolled_back.owner, SYSTEM_PROGRAM_ID);
+    assert_eq!(tx_account_of(&result, &payer.0).lamports, payer.1.lamports);
 }
 
 #[test]

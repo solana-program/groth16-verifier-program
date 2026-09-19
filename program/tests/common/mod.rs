@@ -10,7 +10,14 @@ pub mod circuit;
 
 use {
     groth16_convert::OnChainKey,
-    mollusk_svm::{program::keyed_account_for_system_program, result::InstructionResult, Mollusk},
+    mollusk_svm::{
+        program::keyed_account_for_system_program,
+        result::{
+            types::{TransactionProgramResult, TransactionResult},
+            InstructionResult,
+        },
+        Mollusk,
+    },
     solana_account::Account,
     solana_address::Address,
     solana_groth16_verify::{
@@ -121,6 +128,21 @@ impl Harness {
                 AccountMeta::new(*new_account, true),
             ],
         )
+    }
+
+    /// Executes `instructions` as **one transaction**: same message, same
+    /// transaction context, all-or-nothing. This is what a client actually
+    /// submits, and the only way to test that a failing instruction rolls back
+    /// the ones before it. `process_instruction_chain`, by contrast, runs each
+    /// instruction in its own context and keeps the effects of the ones that
+    /// succeeded.
+    pub fn run_atomic(
+        &self,
+        instructions: &[Instruction],
+        accounts: &[(Address, Account)],
+    ) -> TransactionResult {
+        self.mollusk
+            .process_transaction_instructions(instructions, accounts)
     }
 
     /// The full documented registration flow in one instruction chain:
@@ -260,4 +282,33 @@ pub fn assert_program_error(result: &InstructionResult, expected: ProgramError) 
         mollusk_svm::result::ProgramResult::Failure(e) if *e == expected => {}
         other => panic!("expected {expected:?}, got {other:?}"),
     }
+}
+
+pub fn tx_account_of(result: &TransactionResult, address: &Address) -> Account {
+    result
+        .resulting_accounts
+        .iter()
+        .find(|(a, _)| a == address)
+        .map(|(_, acc)| acc.clone())
+        .unwrap_or_else(|| panic!("account {address} not in result"))
+}
+
+pub fn assert_tx_success(result: &TransactionResult) {
+    assert!(
+        matches!(result.program_result, TransactionProgramResult::Success),
+        "expected success, got {:?}",
+        result.program_result
+    );
+}
+
+/// The transaction failed at instruction `index` with `expected`.
+pub fn assert_tx_program_error(result: &TransactionResult, index: usize, expected: ProgramError) {
+    match &result.program_result {
+        TransactionProgramResult::Failure(i, e) if *i == index && *e == expected => {}
+        other => panic!("expected {expected:?} at instruction {index}, got {other:?}"),
+    }
+}
+
+pub fn assert_tx_custom_error(result: &TransactionResult, index: usize, code: u32) {
+    assert_tx_program_error(result, index, ProgramError::Custom(code));
 }
