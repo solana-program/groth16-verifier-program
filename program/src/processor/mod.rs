@@ -9,13 +9,34 @@
 //! accounts carry no semantics for any instruction here, so neither behavior
 //! affects correctness; the patterns exist to reject *too few*.
 
-use pinocchio::{error::ProgramError, AccountView, Address};
+use {
+    pinocchio::{error::ProgramError, AccountView, Address, ProgramResult},
+    solana_groth16_verify::Tag,
+};
 
 pub mod close_staging;
 pub mod initialize_staging;
 pub mod publish;
 pub mod verify;
 pub mod write;
+
+/// The entrypoint: splits `tag ‖ payload` and dispatches on the tag.
+pub fn process_instruction(
+    program_id: &Address,
+    accounts: &mut [AccountView],
+    data: &[u8],
+) -> ProgramResult {
+    let (&tag, payload) = data
+        .split_first()
+        .ok_or(ProgramError::InvalidInstructionData)?;
+    match Tag::from_u8(tag).ok_or(ProgramError::InvalidInstructionData)? {
+        Tag::Verify => verify::process(program_id, accounts, payload),
+        Tag::InitializeStaging => initialize_staging::process(program_id, accounts, payload),
+        Tag::Write => write::process(program_id, accounts, payload),
+        Tag::Publish => publish::process(program_id, accounts, payload),
+        Tag::CloseStaging => close_staging::process(program_id, accounts, payload),
+    }
+}
 
 #[inline(always)]
 pub(crate) fn expect_signer(account: &AccountView) -> Result<(), ProgramError> {
