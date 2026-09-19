@@ -22,6 +22,11 @@ pub mod error;
 mod processor;
 
 /// `Publish` takes five accounts; nothing takes more.
+///
+/// The entrypoint deserializes at most this many accounts and skips any the
+/// transaction supplies beyond them, so a processor's account-count check can
+/// never observe more than five. See `processor` for what that means for each
+/// instruction's surplus-account handling.
 pub const MAX_ACCOUNTS: usize = 5;
 
 #[cfg(any(target_os = "solana", target_arch = "bpf"))]

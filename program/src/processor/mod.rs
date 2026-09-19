@@ -1,7 +1,13 @@
 //! One module per instruction, plus the account checks they share.
 //!
 //! Each processor destructures its account slice with an exact-length
-//! pattern, so both missing and surplus accounts are rejected.
+//! pattern. Missing accounts are always rejected. Surplus accounts are rejected
+//! only up to [`crate::MAX_ACCOUNTS`]: the eager entrypoint deserializes at
+//! most that many and silently skips the rest, so an instruction that takes
+//! fewer than `MAX_ACCOUNTS` sees, and rejects, extra accounts, while
+//! `Publish` — which takes exactly `MAX_ACCOUNTS` — never sees a sixth. Extra
+//! accounts carry no semantics for any instruction here, so neither behavior
+//! affects correctness; the patterns exist to reject *too few*.
 
 use pinocchio::{error::ProgramError, AccountView, Address};
 
