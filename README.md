@@ -155,7 +155,7 @@ Total `40 + 448 + 64·(n+1)` bytes, checked exactly at `InitializeStaging`.
 | --- | ------------------- | ------------------------------------------------- | ----------------- | ----- |
 | `0` | `InitializeStaging` | authority (s), staging (w)                        | authority         | Data `num_public_inputs: u16`, rejected if `n > 151`. Requires the account be owned by the program, uninitialized, and exactly `40 + 448 + 64·(n+1)` bytes. Writes the header. **Must be in the same transaction as the `create_account` that made the staging account** — see [Registration](#registration) |
 | `1` | `Write`             | authority (s), staging (w)                        | stored authority  | Data `offset: u32 ‖ bytes`. `offset` is relative to the **body**; the write must satisfy `offset + len ≤ body_len` with overflow-checked arithmetic. The header is never writable |
-| `2` | `Publish`           | authority (s,w), payer (s,w), staging (w), vk PDA (w), system | stored authority | No instruction data. Validates the staging body, derives the canonical PDA from `sha256(body)`, brings it into existence at its exact final size, copies the body, writes the header — all in one instruction. Closes staging, refunding its rent to authority (which is why authority is writable) |
+| `2` | `Publish`           | authority (s,w), payer (s,w), staging (w), vk PDA (w), system | stored authority, payer | No instruction data. Validates the staging body, derives the canonical PDA from `sha256(body)`, brings it into existence at its exact final size, copies the body, writes the header — all in one instruction. Closes staging, refunding its rent to authority (which is why authority is writable) |
 | `3` | `Verify`            | vk PDA (r)                                        | none              | `proof ‖ public_inputs`; the hot path |
 | `4` | `CloseStaging`      | authority (s,w), staging (w)                      | stored authority  | Refunds staging rent. Canonical accounts cannot be closed |
 
@@ -225,15 +225,55 @@ as the key needs. Small keys fit `create_account ‖ InitializeStaging ‖ Write
 Publish` in one transaction; large ones take several, with no window in which a
 third party can affect the outcome.
 
+The `instruction` module of `solana-groth16-verify` builds the whole flow, and
+returns the two instructions that must share a transaction as one unit:
+
+```rust
+use solana_groth16_verify::instruction as ix;
+
+// Off-chain, once: the address the key will live at, and the check Publish
+// will make. Conversion alone accepts keys that Publish would not.
+key.validate_for_publish()?;
+let (key_address, _) = ix::find_key_address(&ix::ID, &key.hash());
+
+// Transaction 1: CreateAccount ‖ InitializeStaging, as a pair.
+let rent = rent.minimum_balance(staging_account_len(n));
+let tx1: [Instruction; 2] =
+    ix::create_staging(&ix::ID, &payer, &authority, &staging, n as u16, rent);
+
+// Transactions 2..k: the body, 800 bytes per Write. Authority-gated, so
+// these can go out at any pace.
+let uploads = ix::write_body(&ix::ID, &authority, &staging, key.body(), 800);
+
+// Transaction k+1: Publish. Staging is closed and its rent refunded.
+let publish = ix::publish(&ix::ID, &authority, &payer, &staging, &key_address);
+```
+
+[program/tests/walkthrough.rs](program/tests/walkthrough.rs) runs exactly this
+against the SBF artifact, each transaction as a real message through Mollusk's
+`process_transaction_instructions`, then plays the user checking the key and
+the consuming program verifying a proof (`make test-program ARGS='--test
+walkthrough'`).
+
 The consequence is that **the address is a commitment to the verifying key**. A
-program CPI-ing into the verifier hardcodes the expected PDA:
+program CPI-ing into the verifier hardcodes the expected PDA and checks the
+account it was handed against it before invoking:
 
 ```rust
 const PAYMENT_CIRCUIT_VK: Address = address!("...");
 
-// The verifier checks the account is owned by it and carries the key
-// discriminator; the caller checks the address is the circuit it meant.
-// Together that is equivalent to a per-circuit deployed contract.
+fn verify_payment(key: &AccountView, proof_and_inputs: &[u8]) -> ProgramResult {
+    // The caller checks the address is the circuit it meant. The verifier
+    // checks the account is owned by it and carries the key discriminator,
+    // which Publish alone can have written. Together that is equivalent to a
+    // per-circuit deployed contract.
+    if key.address() != &PAYMENT_CIRCUIT_VK {
+        return Err(ProgramError::InvalidArgument);
+    }
+    let mut data = [Tag::Verify as u8].to_vec();
+    data.extend_from_slice(proof_and_inputs);
+    invoke(&Instruction { program_id: GROTH16_PROGRAM, accounts: [readonly(key)], data }, &[key])
+}
 ```
 
 A different verifying key is a different address. There is no upgrade path for
@@ -245,6 +285,47 @@ exactly the point and identity rules enforced by `Publish`. Conversion alone
 checks the source format and does not require a publishable key. Inline users
 can call `VerifyingKey::validate_for_publish()` once when accepting a key;
 `verify()` does not repeat this registration-time validation.
+
+### Distributing the proving key
+
+The trusted setup produces two keys. The verifying key goes on-chain as above.
+The proving key is large (megabytes for a modest circuit), is needed by anyone
+who wants to produce a proof, and never touches the chain: the application
+hosts it wherever it likes — a release archive, IPFS, a CDN — alongside the
+verifying key in the same serialization (`gnark`'s `WriteTo`/`WriteRawTo` or
+arkworks' `CanonicalSerialize`), and publishes the canonical key address.
+
+A user who wants to prove independently, rather than through the application's
+prover, fetches both and checks two things on the host, trusting neither the
+download nor the application:
+
+1. **The verifying key is the one on-chain.** Parse it with `groth16-convert`
+   and recompute the address, exactly as `Publish` did:
+
+   ```rust
+   let key = gnark::parse_verifying_key(&vk_bytes)?;        // or arkworks::key(&vk)
+   let (address, _) = ix::find_key_address(&ix::ID, &key.hash());
+   assert_eq!(address, PAYMENT_CIRCUIT_VK);                 // from the consuming program
+   ```
+
+   The match is the whole check: the address commits to every byte of the
+   key, and nothing can be published at it with different contents. The
+   consuming program's source (or its on-chain bytes) is where the user reads
+   `PAYMENT_CIRCUIT_VK`, not the application's website.
+
+2. **The proving key belongs to that verifying key.** This is a property of the
+   setup, not of the program, and each library checks it its own way. With
+   arkworks, `pk.vk` is embedded in the proving key: compare
+   `arkworks::key(&pk.vk)?.hash()` against the hash above. With gnark, the
+   proving key does not embed the verifying key: prove a witness you choose and
+   verify it under the downloaded verifying key — with `groth16.Verify`
+   locally or, once, with `Verify` on-chain. A proof under a mismatched proving
+   key does not verify.
+
+The application should document where the keys are hosted and the address it
+published at; the user needs nothing else from it. Regenerating the setup gives
+a new pair and a new address, and the old key remains verifiable at the old
+address forever.
 
 ### Trust assumptions
 
@@ -310,6 +391,7 @@ methodology, and the stage-by-stage tables are in
 | ------------------------------------------ | ------------------------------------------------------------------ |
 | `solana-groth16-verify` unit tests                | Scalar comparisons, key length inference, account header round-trips |
 | `groth16-convert` unit tests + `groth16-verify/tests/gnark_fixture.rs` | Point encoding round-trips, gnark decompression of both roots and the identity, and the fixture parsed from both compressed and raw encodings, verified by arkworks and by the verifier's host path |
+| `program/tests/walkthrough.rs`             | The [Registration](#registration) example end to end, every transaction a real message: `create_staging` atomically, chunked `write_body`, `Publish` with refund, the user recomputing the address from the distributed key, the consumer pinning the address and verifying |
 | `program/tests/gnark.rs`                   | The gnark fixture registered through the real instruction flow and verified on SBF; wrong input, tampered proof, wrong input count and non-canonical scalar each rejected with the right code |
 | `program/tests/arkworks.rs`                | Fresh random arkworks setups and proofs every run for `n ∈ {0, 1, 2, 5, 8}`; inputs of exactly `0` and `1` through the skip paths; a proof under the wrong key |
 | `program/tests/registry.rs`                | Every registration guarantee from `docs/design.md §2`: pre-funded target, payer ≠ authority, non-canonical bump, body/address mismatch, invalid and identity points, republish, `n = 151` and `n = 152`, `Write` bounds, staging authority, `Verify` account checks |

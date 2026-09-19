@@ -6,7 +6,7 @@
 extern crate alloc;
 
 use {
-    crate::constants::{FR_SIZE, PROOF_SIZE, VK_SEED_PREFIX},
+    crate::constants::{staging_account_len, FR_SIZE, PROOF_SIZE, VK_SEED_PREFIX},
     alloc::{vec, vec::Vec},
     sha2::{Digest, Sha256},
     solana_address::{declare_id, Address},
@@ -53,6 +53,66 @@ pub fn initialize_staging(
             AccountMeta::new(*staging, false),
         ],
     )
+}
+
+/// System-program `CreateAccount` for a staging account sized for `n` public
+/// inputs, followed by the `InitializeStaging` that claims it for `authority`.
+///
+/// **Submit both in one transaction**, in this order. `InitializeStaging`
+/// cannot tell who paid for the account, so a staging account created in one
+/// transaction and initialized in the next can be claimed by anyone in
+/// between, who then owns its rent through `CloseStaging`. Returning the pair
+/// as a unit is what makes the rule hard to break by accident.
+///
+/// `lamports` is the rent-exempt minimum for `staging_account_len(n)` bytes,
+/// read from the cluster's `Rent`. `payer` and `staging` both sign
+/// `CreateAccount`; `authority` signs `InitializeStaging`.
+pub fn create_staging(
+    program_id: &Address,
+    payer: &Address,
+    authority: &Address,
+    staging: &Address,
+    num_public_inputs: u16,
+    lamports: u64,
+) -> [Instruction; 2] {
+    let space = staging_account_len(num_public_inputs as usize);
+    // SystemInstruction::CreateAccount { lamports, space, owner }, bincode.
+    let mut data = Vec::with_capacity(4 + 8 + 8 + 32);
+    data.extend_from_slice(&0u32.to_le_bytes());
+    data.extend_from_slice(&lamports.to_le_bytes());
+    data.extend_from_slice(&(space as u64).to_le_bytes());
+    data.extend_from_slice(program_id.as_array());
+    let create = Instruction::new_with_bytes(
+        SYSTEM_PROGRAM_ID,
+        &data,
+        vec![
+            AccountMeta::new(*payer, true),
+            AccountMeta::new(*staging, true),
+        ],
+    );
+    [
+        create,
+        initialize_staging(program_id, authority, staging, num_public_inputs),
+    ]
+}
+
+/// The `Write`s that upload a whole key body into a staging account, in
+/// `chunk`-byte pieces at ascending offsets. Each fits in its own transaction
+/// or several may share one, in any order; a transaction holds about 1,100
+/// bytes of instruction data after the accounts and signature, so a `chunk`
+/// between 800 and 900 is a practical default.
+pub fn write_body(
+    program_id: &Address,
+    authority: &Address,
+    staging: &Address,
+    body: &[u8],
+    chunk: usize,
+) -> Vec<Instruction> {
+    assert!(chunk > 0, "chunk must be nonzero");
+    body.chunks(chunk)
+        .enumerate()
+        .map(|(i, piece)| write(program_id, authority, staging, (i * chunk) as u32, piece))
+        .collect()
 }
 
 /// Data `[1, offset as u32 LE, bytes...]`, `offset` relative to the body.

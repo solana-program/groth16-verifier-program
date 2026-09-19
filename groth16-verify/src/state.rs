@@ -7,13 +7,11 @@
 //! staging account  [0] disc=2  [1] reserved  [2..4] n  [4..8] reserved  [8..40] authority  [40..] body
 //! ```
 
-use crate::{
-    constants::{vk_body_len, MAX_PUBLIC_INPUTS},
-    error::Groth16Error,
-    vk::VerifyingKey,
-};
+use crate::{constants::MAX_PUBLIC_INPUTS, error::Groth16Error, vk::VerifyingKey};
 
-pub use crate::constants::VK_SEED_PREFIX;
+pub use crate::constants::{
+    key_account_len, staging_account_len, KEY_HEADER_LEN, STAGING_HEADER_LEN, VK_SEED_PREFIX,
+};
 
 pub const DISCRIMINATOR_UNINITIALIZED: u8 = 0;
 pub const DISCRIMINATOR_KEY: u8 = 1;
@@ -23,20 +21,8 @@ pub const DISCRIMINATOR_OFFSET: usize = 0;
 pub const NUM_PUBLIC_INPUTS_OFFSET: usize = 2;
 
 pub const KEY_BUMP_OFFSET: usize = 1;
-pub const KEY_HEADER_LEN: usize = 8;
 
 pub const STAGING_AUTHORITY_OFFSET: usize = 8;
-pub const STAGING_HEADER_LEN: usize = 40;
-
-/// Total length of a canonical key account for `n` public inputs.
-pub const fn key_account_len(num_public_inputs: usize) -> usize {
-    KEY_HEADER_LEN + vk_body_len(num_public_inputs)
-}
-
-/// Total length of a staging account for `n` public inputs.
-pub const fn staging_account_len(num_public_inputs: usize) -> usize {
-    STAGING_HEADER_LEN + vk_body_len(num_public_inputs)
-}
 
 #[inline]
 fn read_n(data: &[u8]) -> usize {
@@ -158,7 +144,7 @@ pub fn staging_body_mut(data: &mut [u8]) -> Result<&mut [u8], Groth16Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, crate::constants::vk_body_len};
 
     #[test]
     fn key_header_round_trip() {

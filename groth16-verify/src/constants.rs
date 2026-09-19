@@ -52,6 +52,28 @@ pub const fn vk_body_len(num_public_inputs: usize) -> usize {
     VK_FIXED_SIZE + G1_SIZE * (num_public_inputs + 1)
 }
 
+// --- Account sizes ------------------------------------------------------------
+//
+// Kept here rather than in `state` so that an instruction-only client (the
+// `instruction` feature without `verify`) can size the staging account it has
+// to create. `state` re-exports them.
+
+/// Header of a canonical key account: discriminator, bump, `n`, reserved.
+pub const KEY_HEADER_LEN: usize = 8;
+/// Header of a staging account: discriminator, reserved, `n`, reserved,
+/// 32-byte authority.
+pub const STAGING_HEADER_LEN: usize = 40;
+
+/// Total length of a canonical key account for `n` public inputs.
+pub const fn key_account_len(num_public_inputs: usize) -> usize {
+    KEY_HEADER_LEN + vk_body_len(num_public_inputs)
+}
+
+/// Total length of a staging account for `n` public inputs.
+pub const fn staging_account_len(num_public_inputs: usize) -> usize {
+    STAGING_HEADER_LEN + vk_body_len(num_public_inputs)
+}
+
 // --- Pairing input ------------------------------------------------------------
 
 /// One `(G1, G2)` pair as the pairing syscall consumes it.
