@@ -286,6 +286,18 @@ checks the source format and does not require a publishable key. Inline users
 can call `VerifyingKey::validate_for_publish()` once when accepting a key;
 `verify()` does not repeat this registration-time validation.
 
+That validation is about **well-formedness**, not provenance. It establishes
+that every account the program owns holds a syntactically valid Groth16 key —
+points on the curve and in the subgroup, no identity `α`, `−β`, `−γ` or `−δ`
+(an identity `−γ` would make one fixed proof verify for every input) — so that
+the verifier's own guarantees hold for whatever key it is handed. It cannot
+tell a key for the intended circuit from a well-formed key for a circuit with
+no constraints; both publish, and the second verifies proofs of nothing. Which
+circuit a key belongs to is a property of the trusted setup, established
+off-chain as the next section describes, and the address then commits to the
+bytes that were checked. A consumer that pins an address without doing that
+check is unprotected, and the on-chain validation does not change this.
+
 ### Distributing the proving key
 
 The trusted setup produces two keys. The verifying key goes on-chain as above.
@@ -296,7 +308,7 @@ verifying key in the same serialization (`gnark`'s `WriteTo`/`WriteRawTo` or
 arkworks' `CanonicalSerialize`), and publishes the canonical key address.
 
 A user who wants to prove independently, rather than through the application's
-prover, fetches both and checks two things on the host, trusting neither the
+prover, fetches both and checks three things on the host, trusting neither the
 download nor the application:
 
 1. **The verifying key is the one on-chain.** Parse it with `groth16-convert`
@@ -313,19 +325,30 @@ download nor the application:
    consuming program's source (or its on-chain bytes) is where the user reads
    `PAYMENT_CIRCUIT_VK`, not the application's website.
 
-2. **The proving key belongs to that verifying key.** This is a property of the
-   setup, not of the program, and each library checks it its own way. With
-   arkworks, `pk.vk` is embedded in the proving key: compare
-   `arkworks::key(&pk.vk)?.hash()` against the hash above. With gnark, the
-   proving key does not embed the verifying key: prove a witness you choose and
-   verify it under the downloaded verifying key — with `groth16.Verify`
-   locally or, once, with `Verify` on-chain. A proof under a mismatched proving
-   key does not verify.
+2. **The verifying key is the setup's output for the intended circuit.** The
+   circuit being public is not enough on its own: a Groth16 key depends on the
+   setup's secret randomness as well as on the circuit, so it cannot be
+   recomputed from the circuit and compared. What can be checked is the setup
+   itself. A multi-party ceremony publishes a transcript, and replaying its
+   checks (each contribution's proof of knowledge, the final key matching the
+   last contribution for the compiled circuit) is what ties the key to the
+   circuit. A single-party setup with no transcript offers nothing to check;
+   the user is then trusting whoever ran it, both for the key bytes and for
+   the toxic waste. This is the step the on-chain validation cannot replace,
+   and the one that decides whether pinning the address means anything.
 
-The application should document where the keys are hosted and the address it
-published at; the user needs nothing else from it. Regenerating the setup gives
-a new pair and a new address, and the old key remains verifiable at the old
-address forever.
+3. **The proving key belongs to that verifying key.** With arkworks, `pk.vk`
+   is embedded in the proving key: compare `arkworks::key(&pk.vk)?.hash()`
+   against the hash above. With gnark, the proving key does not embed the
+   verifying key: prove a witness you choose and verify it under the downloaded
+   verifying key — with `groth16.Verify` locally or, once, with `Verify`
+   on-chain. A proof under a mismatched proving key does not verify. When the
+   ceremony transcript covers the proving key too, step 2 already implies this.
+
+The application should document where the keys and the ceremony transcript are
+hosted and the address it published at; the user needs nothing else from it.
+Regenerating the setup gives a new pair and a new address, and the old key
+remains verifiable at the old address forever.
 
 ### Trust assumptions
 

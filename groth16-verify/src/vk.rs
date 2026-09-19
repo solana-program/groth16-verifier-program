@@ -22,6 +22,11 @@ pub struct VerifyingKey<'a> {
 impl<'a> VerifyingKey<'a> {
     /// Interprets `body` as a key, deriving `n` from its length. Rejects any
     /// length that is not `448 + 64·(n+1)` for some `n ≤ MAX_PUBLIC_INPUTS`.
+    ///
+    /// Layout only: the points are not checked. A body read from a published
+    /// key account has already passed [`Self::validate_for_publish`]; a body
+    /// from anywhere else should be put through it once when it is stored.
+    /// Neither says which circuit the key belongs to — see the crate docs.
     #[inline]
     pub fn from_body(body: &'a [u8]) -> Result<Self, Groth16Error> {
         let ic_bytes = body
@@ -64,8 +69,11 @@ impl<'a> VerifyingKey<'a> {
 
     /// Checks every point and rejects identity α, β, γ and δ, matching Publish.
     ///
-    /// Constructors check only layout. Call this once before trusting an inline
+    /// Constructors check only layout. Call this once when storing an inline
     /// key; verification does not repeat this registration-time validation.
+    /// This is a well-formedness check: it says the bytes are a Groth16 key for
+    /// which the verifier is sound, not that they are the key for any
+    /// particular circuit. That is settled off-chain against the setup.
     pub fn validate_for_publish(&self) -> Result<(), Groth16Error> {
         crate::validation::validate_for_publish(self)
     }

@@ -198,12 +198,15 @@ fn readme_walkthrough() {
     let (recomputed, _) = ix::find_key_address(&program_id, &downloaded_vk.hash());
     assert_eq!(recomputed, advertised_key_address);
 
-    // Whether the *proving* key matches the verifying key is a property of
-    // the setup, not of this program: with arkworks compare `pk.vk` against
-    // the downloaded key; with gnark, prove a known witness and verify it
-    // under the downloaded key. Both are host-side. The fixture ships only
-    // the proof the generator produced, so that step is represented by the
-    // proof and public inputs below.
+    // Two things the chain cannot check remain with the user, both host-side.
+    // Whether the verifying key is the setup's output for the *intended
+    // circuit* is checked against the ceremony transcript, if there is one;
+    // the address commits to the bytes but says nothing about which circuit
+    // they came from. Whether the *proving* key matches the verifying key is
+    // checked with arkworks by comparing `pk.vk` against the downloaded key,
+    // or with gnark by proving a known witness and verifying it under the
+    // downloaded key. The fixture ships only the proof the generator produced,
+    // so that step is represented by the proof and public inputs below.
     let proof: OnChainProof = gnark::parse_proof(&fixture("proof.bin")).expect("proof");
     let public_inputs = arkworks::public_inputs(
         &gnark::parse_public_witness(&fixture("public.bin")).expect("public witness"),
