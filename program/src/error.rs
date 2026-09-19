@@ -1,17 +1,35 @@
-//! Error surface of the program.
+//! Error surface of the program. Three kinds of failure, told apart by how
+//! they are reported:
 //!
-//! Verification and layout errors from [`solana_groth16_verify`] are exposed as
-//! `ProgramError::Custom(code)` with the codes below, so a CPI caller can tell
-//! "proof did not verify" apart from "malformed input". Registry-level
-//! failures use the standard `ProgramError` variants that describe them.
+//! - **Verification and layout** (`Custom(0..=8)`): every [`Groth16Error`]
+//!   from [`solana_groth16_verify`], mapped one-to-one by [`map_groth16`], so a
+//!   CPI caller can tell "proof did not verify" (`6`) apart from "malformed
+//!   input" (the rest).
+//! - **Registry semantics** (`Custom(100..)`): conditions only this program's
+//!   registration flow can detect — a key body that does not hash to the
+//!   supplied address, a key already published, a staging account of the wrong
+//!   size, a `Write` past the body, an identity element where a key element
+//!   must not be one. These have no standard `ProgramError` equivalent, so they
+//!   get codes of their own.
+//! - **Account and signature checks**: the standard variants that describe
+//!   them — `MissingRequiredSignature`, `InvalidAccountOwner`,
+//!   `IncorrectAuthority` (wrong staging authority), `InvalidArgument` (wrong
+//!   account count or a read-only account that must be writable),
+//!   `InvalidInstructionData` (unknown tag, wrong payload length),
+//!   `AccountAlreadyInitialized`, `InvalidAccountData`, `ArithmeticOverflow`.
+//!   None of these carry information a caller needs beyond the variant.
 
 use {pinocchio::error::ProgramError, solana_groth16_verify::Groth16Error};
 
 /// Custom error codes. Stable; append only.
+///
+/// `0..=8` mirror [`Groth16Error`] variant for variant; `100..` are the
+/// registry's own. The gap keeps the two ranges from ever colliding as either
+/// grows.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Groth16ProgramError {
-    // Existing verification/layout codes remain stable.
+    // --- Verification and layout, from `solana_groth16_verify` ----------------
     InvalidProofLength = 0,
     InvalidKeyLength = 1,
     TooManyPublicInputs = 2,
@@ -22,7 +40,7 @@ pub enum Groth16ProgramError {
     InvalidAccountData = 7,
     WrongDiscriminator = 8,
 
-    // Registry.
+    // --- Registry semantics, this program's own ---------------------------------
     /// The supplied key account is not the canonical address for the staged
     /// key body (`find_program_address([b"vk", sha256(body)])`).
     KeyAddressMismatch = 100,
