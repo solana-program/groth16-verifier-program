@@ -140,37 +140,56 @@ fn body_not_matching_the_address_is_rejected() {
 }
 
 #[test]
-fn invalid_points_in_the_body_are_rejected_before_anything_else() {
+fn invalid_points_in_the_body_are_rejected() {
     let Some(h) = harness() else { return };
     let key = synthetic_key(1, 5);
     let authority = h.wallet(10_000_000_000);
 
+    // The address check runs before point validation, so each corrupted body
+    // is published at *its own* canonical address; otherwise every case below
+    // would stop at KEY_ADDRESS_MISMATCH without reaching the point checks.
+    let publish_corrupted = |body: Vec<u8>| {
+        let (pda, _) = find_key_address(&h.program_id, &ix::vk_hash(&body));
+        h.register_chain(RegisterRequest {
+            body_override: Some(body),
+            key_pda: Some(pda),
+            ..RegisterRequest::new(&key, &authority)
+        })
+        .0
+    };
+
     // Off-curve IC₁.
+    let mut body = key.body().to_vec();
+    body[575] ^= 1;
+    assert_custom_error(&publish_corrupted(body), code::INVALID_POINT);
+
+    // Off-curve −β (only the pairing path catches G2).
+    let mut body = key.body().to_vec();
+    body[191] ^= 1;
+    assert_custom_error(&publish_corrupted(body), code::INVALID_POINT);
+
+    // Identity α.
+    let mut body = key.body().to_vec();
+    body[..64].fill(0);
+    assert_custom_error(&publish_corrupted(body), code::IDENTITY_KEY_ELEMENT);
+}
+
+#[test]
+fn address_is_checked_before_points_are_validated() {
+    let Some(h) = harness() else { return };
+    let key = synthetic_key(1, 6);
+    let authority = h.wallet(10_000_000_000);
+
+    // A body that is both off-curve *and* published at the wrong address (the
+    // real key's) fails on the address: the cheap check runs first, so a
+    // wrong target never pays for the validation pairing.
     let mut body = key.body().to_vec();
     body[575] ^= 1;
     let (result, _) = h.register_chain(RegisterRequest {
         body_override: Some(body),
         ..RegisterRequest::new(&key, &authority)
     });
-    assert_custom_error(&result, code::INVALID_POINT);
-
-    // Off-curve −β (only the pairing path catches G2).
-    let mut body = key.body().to_vec();
-    body[191] ^= 1;
-    let (result, _) = h.register_chain(RegisterRequest {
-        body_override: Some(body),
-        ..RegisterRequest::new(&key, &authority)
-    });
-    assert_custom_error(&result, code::INVALID_POINT);
-
-    // Identity α.
-    let mut body = key.body().to_vec();
-    body[..64].fill(0);
-    let (result, _) = h.register_chain(RegisterRequest {
-        body_override: Some(body),
-        ..RegisterRequest::new(&key, &authority)
-    });
-    assert_custom_error(&result, code::IDENTITY_KEY_ELEMENT);
+    assert_custom_error(&result, code::KEY_ADDRESS_MISMATCH);
 }
 
 #[test]

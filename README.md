@@ -155,7 +155,7 @@ Total `40 + 448 + 64·(n+1)` bytes, checked exactly at `InitializeStaging`.
 | --- | ------------------- | ------------------------------------------------- | ----------------- | ----- |
 | `0` | `InitializeStaging` | authority (s), staging (w)                        | authority         | Data `num_public_inputs: u16`, rejected if `n > 151`. Requires the account be owned by the program, uninitialized, and exactly `40 + 448 + 64·(n+1)` bytes. Writes the header. **Must be in the same transaction as the `create_account` that made the staging account** — see [Registration](#registration) |
 | `1` | `Write`             | authority (s), staging (w)                        | stored authority  | Data `offset: u32 ‖ bytes`. `offset` is relative to the **body**; the write must satisfy `offset + len ≤ body_len` with overflow-checked arithmetic. The header is never writable |
-| `2` | `Publish`           | authority (s,w), payer (s,w), staging (w), vk PDA (w), system | stored authority, payer | No instruction data. Validates the staging body, derives the canonical PDA from `sha256(body)`, brings it into existence at its exact final size, copies the body, writes the header — all in one instruction. Closes staging, refunding its rent to authority (which is why authority is writable) |
+| `2` | `Publish`           | authority (s,w), payer (s,w), staging (w), vk PDA (w), system | stored authority, payer | No instruction data. Derives the canonical PDA from `sha256(body)` and checks it is unpublished, validates the staging body, brings the PDA into existence at its exact final size, copies the body, writes the header — all in one instruction. Closes staging, refunding its rent to authority (which is why authority is writable) |
 | `3` | `Verify`            | vk PDA (r)                                        | none              | `proof ‖ public_inputs`; the hot path |
 | `4` | `CloseStaging`      | authority (s,w), staging (w)                      | stored authority  | Refunds staging rent. Canonical accounts cannot be closed |
 
@@ -177,15 +177,19 @@ wrong `n`, or contents that don't hash to its address.
 
 1. staging is owned by the program, carries the staging discriminator, and the
    signer is its recorded `authority`;
-2. the staging body decodes: every G1 and G2 point is on the curve and in the
-   prime-order subgroup (all-zero bytes, the syscall encoding of the identity,
-   are accepted for `ICᵢ` and rejected for `α`, `−β`, `−γ`, `−δ`);
-3. `find_program_address([b"vk", sha256(body)])` — the **canonical** bump,
+2. `find_program_address([b"vk", sha256(body)])` — the **canonical** bump,
    computed on-chain, never supplied by the caller — yields the vk PDA account's
    address, and that account is not yet owned by the program;
+3. the staging body decodes: every G1 and G2 point is on the curve and in the
+   prime-order subgroup (all-zero bytes, the syscall encoding of the identity,
+   are accepted for `ICᵢ` and rejected for `α`, `−β`, `−γ`, `−δ`);
 4. then it brings the PDA into existence with `payer` funding rent, sized
    exactly `456 + 64·(n+1)`, copies the body, writes the header (including the
    bump), and closes staging.
+
+Step 2 comes before step 3 because it is cheap — one hash, one derivation, one
+owner compare — and step 3 is not: `61,299 + 334·n` CU of syscalls. A republish
+or a wrong target address fails before paying for the pairing.
 
 Step 4 does not assume the address is untouched. Anyone can transfer lamports to
 a not-yet-existing address, and a plain `create_account` fails on an account
@@ -213,7 +217,7 @@ The upload itself follows the BPF upgradeable loader's buffer pattern: a
 private, authority-gated staging account that nobody else can write to, and
 that its authority can abandon and reclaim at any time. Two uploaders working on
 the same key don't interact until `Publish`, and whichever publishes second
-fails harmlessly on step 3 — the key is already available at its address.
+fails harmlessly on step 2 — the key is already available at its address.
 
 One client-side rule keeps the staging account private: **`create_account` and
 `InitializeStaging` go in the same transaction.** `InitializeStaging` can only

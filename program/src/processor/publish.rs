@@ -7,12 +7,17 @@
 //!
 //! Steps, in order (see the README's registration section):
 //! 1. staging is ours, initialized, and signed for by its authority;
-//! 2. every point in the body validates — G2 via a pairing call (the only
-//!    opcode that subgroup-checks G2), G1 via addition;
-//! 3. `find_program_address([b"vk", sha256(body)])` equals `key`, and `key`
+//! 2. `find_program_address([b"vk", sha256(body)])` equals `key`, and `key`
 //!    is not already ours;
+//! 3. every point in the body validates — G2 via a pairing call (the only
+//!    opcode that subgroup-checks G2), G1 via addition;
 //! 4. bring `key` into existence at exactly its final size (tolerating a
 //!    pre-funded address), copy the body, write the header, close staging.
+//!
+//! The address checks come before point validation because they are cheap
+//! (one hash, one derivation, one owner compare) and validation is not
+//! (`61,299 + 334·n` CU). A republish or a wrong target fails before paying
+//! for the pairing.
 
 use {
     crate::{
@@ -59,10 +64,7 @@ pub fn process(
     let n = header.num_public_inputs;
     let vk = VerifyingKey::from_body_with_len(body, n).map_err(map_groth16)?;
 
-    // --- 2. validate every point ------------------------------------------------
-    vk.validate_for_publish().map_err(map_groth16)?;
-
-    // --- 3. address -------------------------------------------------------------
+    // --- 2. address -------------------------------------------------------------
     let hash = sha256(body);
     let (expected, bump) = Address::find_program_address(&[VK_SEED_PREFIX, &hash], program_id);
     if *key.address() != expected {
@@ -76,6 +78,9 @@ pub fn process(
     if !key.owned_by(&SYSTEM_PROGRAM_ID) || key.data_len() != 0 {
         return Err(ProgramError::InvalidAccountData);
     }
+
+    // --- 3. validate every point ------------------------------------------------
+    vk.validate_for_publish().map_err(map_groth16)?;
 
     // --- 4. create, fill, close -------------------------------------------------
     let space = key_account_len(n);

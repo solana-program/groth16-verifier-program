@@ -112,8 +112,8 @@ first design still applies, since only the initializer could resize or close.
 *Upload into a private staging account, then publish atomically.* This is the
 design. The staging account is owned by its authority and nobody else can touch
 it, so there is no race. The canonical PDA is created *by* `Publish`, in the
-same instruction that validates the body, checks its hash against the address,
-sizes the account from `n`, and fills it. There is no instruction that writes
+same instruction that checks the body's hash against the address, validates
+the body, sizes the account from `n`, and fills it. There is no instruction that writes
 to a canonical account after that. Consequently the canonical address has
 exactly two possible states — nonexistent, or complete and correct — and no
 adversary can move it into a third.
