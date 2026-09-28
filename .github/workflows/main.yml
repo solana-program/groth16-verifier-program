@@ -6,15 +6,9 @@ on:
   pull_request:
     branches: [main]
 
-# JSON-encoded package lists consumed by the reusable workflow's matrices. An
-# empty string skips the per-package jobs (format/clippy/docs/powerset, SBF
-# build, tests) while `audit` and `spellcheck` still run; the lists fill in as
-# crates land, e.g.
-#   SBPF_PROGRAM_PACKAGES: "['program', 'bench']"
-#   RUST_PACKAGES: "['program', 'bench', 'groth16-verify', 'groth16-convert']"
 env:
-  SBPF_PROGRAM_PACKAGES: ""
-  RUST_PACKAGES: ""
+  SBPF_PROGRAM_PACKAGES: "['program', 'bench']"
+  RUST_PACKAGES: "['program', 'bench', 'groth16-verify', 'groth16-convert']"
 
 jobs:
   set_env:
