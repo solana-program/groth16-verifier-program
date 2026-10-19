@@ -42,19 +42,24 @@ pub fn g1_mul(p: &[u8; G1_SIZE], scalar: &[u8; FR_SIZE]) -> Result<[u8; G1_SIZE]
 ///
 /// Returns `Ok(true)` when the product is one, `Ok(false)` when every point
 /// decoded but the product is not one, and `Err(InvalidPoint)` when the
-/// syscall rejected a point.
+/// syscall rejected a point or `input` is not a whole number of pairs. The
+/// length is checked here, before the syscall, so that an incomplete input
+/// fails the same way in every build profile and on every backend.
 #[inline]
 pub fn pairing_is_one(input: &[u8]) -> Result<bool, Groth16Error> {
-    debug_assert!(input.len().is_multiple_of(PAIRING_ELEMENT_SIZE));
+    if !input.len().is_multiple_of(PAIRING_ELEMENT_SIZE) {
+        return Err(Groth16Error::InvalidPoint);
+    }
     let mut out = [0u8; PAIRING_OUTPUT_SIZE];
     group_op(ALT_BN128_PAIRING_BE, input, &mut out)?;
     // A big-endian 0 or 1: the last byte carries it, everything else is zero.
     Ok(out[PAIRING_OUTPUT_SIZE - 1] == 1)
 }
 
-/// Runs the syscall as a pure validity check: succeeds iff every point in
-/// `input` deserializes with the runtime's on-curve and subgroup checks. The
-/// pairing result is discarded. Used at publish time.
+/// Runs the syscall as a pure validity check: succeeds iff `input` is a whole
+/// number of pairs and every point in it deserializes with the runtime's
+/// on-curve and subgroup checks. The pairing result is discarded. Used at
+/// publish time.
 #[inline]
 pub fn pairing_validate_points(input: &[u8]) -> Result<(), Groth16Error> {
     pairing_is_one(input).map(|_| ())
@@ -94,4 +99,37 @@ fn group_op(op: u64, input: &[u8], out: &mut [u8]) -> Result<(), Groth16Error> {
     .map_err(|_| Groth16Error::InvalidPoint)?;
     out.copy_from_slice(&result);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An input that is not a whole number of pairs is an error, not a panic,
+    /// from both helpers: one byte short of a pair and one byte past it.
+    #[test]
+    fn incomplete_pairing_input_is_an_error() {
+        for len in [1, PAIRING_ELEMENT_SIZE - 1, PAIRING_ELEMENT_SIZE + 1] {
+            let input = std::vec![0u8; len];
+            assert_eq!(
+                pairing_is_one(&input),
+                Err(Groth16Error::InvalidPoint),
+                "pairing_is_one, len {len}"
+            );
+            assert_eq!(
+                pairing_validate_points(&input),
+                Err(Groth16Error::InvalidPoint),
+                "pairing_validate_points, len {len}"
+            );
+        }
+    }
+
+    /// Whole pairs still reach the backend: a pair of identity points is a
+    /// valid input whose product is one.
+    #[test]
+    fn complete_pairing_input_reaches_the_backend() {
+        let input = [0u8; PAIRING_ELEMENT_SIZE];
+        assert_eq!(pairing_is_one(&input), Ok(true));
+        assert_eq!(pairing_validate_points(&input), Ok(()));
+    }
 }
