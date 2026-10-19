@@ -337,8 +337,9 @@ key has exactly one body and one address. `Proof::from_bytes` makes the check
 on `A`, `B` and `C` (eight 32-byte compares, with their own error code) and
 `validate_for_publish` makes it over the whole body ahead of the identity
 tests that depend on it. This is cheap enough that the argument above against
-re-validation does not apply: about 80 CU of compares per proof, not a
-deserialization.
+re-validation does not apply: about 15 CU per proof — one byte load and one
+compare per coordinate, since `p`'s top byte settles nearly every case — not
+a deserialization.
 
 Not every `alt_bn128` opcode validates equally, and `Publish` has to pick the
 ones that do. In `solana-bn254`, G1 and G2 conversions through

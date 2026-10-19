@@ -19,8 +19,27 @@ use crate::constants::{FQ_MODULUS, FQ_SIZE, G1_SIZE, G2_SIZE};
 
 /// `x < p`. Equal-length big-endian byte strings compare lexicographically in
 /// the same order as the integers they encode.
-#[inline]
+///
+/// The top byte of `p` is `0x30`, so a top byte below it settles the compare
+/// — all but about one in eighty uniformly random elements, and never a flag-bit
+/// encoding. That fast path is one byte load and one compare per coordinate
+/// (two SBF instructions; the proof's eight coordinates unroll to sixteen).
+/// Everything else goes to the full compare, a `memcmp` that on SBF is a
+/// syscall costing about 20 CU, kept out of line.
+#[inline(always)]
 pub fn fq_is_canonical(x: &[u8; FQ_SIZE]) -> bool {
+    if x[0] < FQ_MODULUS[0] {
+        true
+    } else {
+        fq_is_canonical_full(x)
+    }
+}
+
+/// `x < p` by full lexicographic compare; the fast path's fallback, and also
+/// what rejects a top byte above `0x30`.
+#[cold]
+#[inline(never)]
+fn fq_is_canonical_full(x: &[u8; FQ_SIZE]) -> bool {
     x.as_slice() < FQ_MODULUS.as_slice()
 }
 
@@ -38,7 +57,9 @@ pub fn g2_is_canonical(p: &[u8; G2_SIZE]) -> bool {
 
 /// Every 32-byte chunk of `bytes` is `< p`. A proof and a key body are both
 /// nothing but concatenated coordinates, so one pass covers every point.
-#[inline]
+/// Forced inline so that a fixed-size caller (the proof) gets the loop
+/// unrolled to eight byte compares.
+#[inline(always)]
 pub(crate) fn coordinates_are_canonical(bytes: &[u8]) -> bool {
     debug_assert!(bytes.len().is_multiple_of(FQ_SIZE));
     bytes
@@ -63,6 +84,13 @@ mod tests {
         assert!(fq_is_canonical(&below));
         assert!(fq_is_canonical(&[0u8; FQ_SIZE]));
         assert!(!fq_is_canonical(&[0xff; FQ_SIZE]));
+        // Top byte equal to p's: the full compare decides, both ways.
+        let mut just_under = FQ_MODULUS;
+        just_under[1] -= 1;
+        assert!(fq_is_canonical(&just_under));
+        let mut just_over = FQ_MODULUS;
+        just_over[1] += 1;
+        assert!(!fq_is_canonical(&just_over));
         // Both flag bits alone exceed p.
         for bit in [0x40, 0x80, 0xc0] {
             let mut flagged = [0u8; FQ_SIZE];
