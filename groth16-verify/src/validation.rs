@@ -62,13 +62,10 @@ pub fn validate_for_publish(vk: &VerifyingKey) -> Result<(), Groth16Error> {
 mod tests {
     use {
         super::*,
-        crate::constants::{
-            FQ_MODULUS, FQ_SIZE, G2_SIZE, VK_ALPHA_OFFSET, VK_IC_OFFSET, VK_NEG_DELTA_OFFSET,
-        },
+        crate::constants::{FQ_MODULUS, FQ_SIZE, VK_ALPHA_OFFSET},
         ark_bn254::{G1Affine, G2Affine},
         ark_ec::AffineRepr,
         groth16_convert::OnChainKey,
-        std::vec::Vec,
     };
 
     fn validate(body: &[u8]) -> Result<(), Groth16Error> {
@@ -87,21 +84,27 @@ mod tests {
         let key = OnChainKey::new(&g1, &g2, &g2, &g2, &[g1, g1]).unwrap();
         validate(key.body()).unwrap();
 
-        // α with arkworks' infinity flag: not all-zero, decoded as O by the
-        // syscall. Without the range check the identity test misses it.
-        let mut body: Vec<u8> = key.body().to_vec();
-        body[VK_ALPHA_OFFSET + FQ_SIZE] |= 0x40;
-        assert_eq!(validate(&body), Err(Groth16Error::NonCanonicalCoordinate));
-
-        // −δ with the negative flag: the same point under a second encoding.
-        let mut body = key.body().to_vec();
-        body[VK_NEG_DELTA_OFFSET + G2_SIZE / 2] |= 0x80;
-        assert_eq!(validate(&body), Err(Groth16Error::NonCanonicalCoordinate));
-
-        // IC₁'s x equal to p, where no flag bit is involved.
-        let mut body = key.body().to_vec();
-        body[VK_IC_OFFSET + G1_SIZE..VK_IC_OFFSET + G1_SIZE + FQ_SIZE].copy_from_slice(&FQ_MODULUS);
-        assert_eq!(validate(&body), Err(Groth16Error::NonCanonicalCoordinate));
+        for offset in (0..key.body().len()).step_by(FQ_SIZE) {
+            for bit in [0x40, 0x80, 0xc0] {
+                let mut body = key.body().to_vec();
+                body[offset] |= bit;
+                assert_eq!(
+                    validate(&body),
+                    Err(Groth16Error::NonCanonicalCoordinate),
+                    "coordinate at {offset}, flag {bit:#x}"
+                );
+            }
+            let mut body = key.body().to_vec();
+            body[offset..offset + FQ_SIZE].copy_from_slice(&FQ_MODULUS);
+            assert_eq!(
+                validate(&body),
+                Err(Groth16Error::NonCanonicalCoordinate),
+                "coordinate at {offset} equal to p"
+            );
+            body[offset + FQ_SIZE - 1] -= 1;
+            // p − 1 passes the range check but can fail curve validation.
+            assert_eq!(validate(&body), Err(Groth16Error::InvalidPoint));
+        }
 
         // The plain all-zero identity still reaches the identity test.
         let mut body = key.body().to_vec();

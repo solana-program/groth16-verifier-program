@@ -32,13 +32,10 @@
 //! They establish that the bytes are a Groth16 key for which the verifier is
 //! sound, and nothing more.
 //!
-//! One check the syscall does *not* make is repeated by this crate on both
-//! paths: that every point coordinate is below the base-field modulus. The
-//! syscall honors arkworks' serialization flags in the top bits of `y`, so
-//! an out-of-range coordinate can decode as the identity, or as a second
-//! encoding of a valid point, and an all-zero identity test sees neither.
-//! [`Proof::from_bytes`] range-checks `A`, `B` and `C`; `validate_for_publish`
-//! range-checks the whole key before its identity tests. See [`point`].
+//! [`Proof::from_bytes`] range-checks every coordinate of `A`, `B` and `C`;
+//! [`VerifyingKey::validate_for_publish`] does the same for the whole key
+//! before its identity tests. See [`point`] for why the syscall alone does
+//! not enforce canonical coordinate encodings.
 //!
 //! **Provenance.** Whether the key is *the right key* — produced by the trusted
 //! setup for the intended circuit, rather than for a circuit with no

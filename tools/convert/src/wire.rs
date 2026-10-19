@@ -64,11 +64,10 @@ pub fn g2_to_bytes(p: &G2Affine) -> [u8; G2_SIZE] {
 // --- Decoding -----------------------------------------------------------------
 
 pub fn fq_from_bytes(bytes: &[u8; FQ_SIZE]) -> Result<Fq, ConvertError> {
-    let x = Fq::from_be_bytes_mod_order(bytes);
-    if fq_to_bytes(&x) != *bytes {
+    if !solana_groth16_verify::point::fq_is_canonical(bytes) {
         return Err(ConvertError::NonCanonicalField);
     }
-    Ok(x)
+    Ok(Fq::from_be_bytes_mod_order(bytes))
 }
 
 pub fn fq2_from_bytes(bytes: &[u8; 2 * FQ_SIZE]) -> Result<Fq2, ConvertError> {
@@ -78,11 +77,10 @@ pub fn fq2_from_bytes(bytes: &[u8; 2 * FQ_SIZE]) -> Result<Fq2, ConvertError> {
 }
 
 pub fn fr_from_bytes(bytes: &[u8; FR_SIZE]) -> Result<Fr, ConvertError> {
-    let s = Fr::from_be_bytes_mod_order(bytes);
-    if fr_to_bytes(&s) != *bytes {
+    if !solana_groth16_verify::scalar::is_canonical(bytes) {
         return Err(ConvertError::NonCanonicalField);
     }
-    Ok(s)
+    Ok(Fr::from_be_bytes_mod_order(bytes))
 }
 
 /// Decodes and fully validates (on-curve, subgroup) a G1 point.
@@ -309,23 +307,39 @@ mod tests {
 
     #[test]
     fn non_canonical_field_is_rejected() {
+        use solana_groth16_verify::constants::{FQ_MODULUS, FR_MODULUS};
+
+        // Independently pin both shared moduli to arkworks.
+        assert_eq!(Fq::MODULUS.to_bytes_be(), FQ_MODULUS);
+        assert_eq!(Fr::MODULUS.to_bytes_be(), FR_MODULUS);
+        assert_eq!(
+            fq_from_bytes(&FQ_MODULUS),
+            Err(ConvertError::NonCanonicalField)
+        );
+        let mut below = FQ_MODULUS;
+        below[FQ_SIZE - 1] -= 1;
+        assert_eq!(fq_to_bytes(&fq_from_bytes(&below).unwrap()), below);
+        assert_eq!(
+            fr_from_bytes(&FR_MODULUS),
+            Err(ConvertError::NonCanonicalField)
+        );
+        let mut below = FR_MODULUS;
+        below[FR_SIZE - 1] -= 1;
+        assert_eq!(fr_to_bytes(&fr_from_bytes(&below).unwrap()), below);
         let mut bytes = [0xffu8; FQ_SIZE];
         assert_eq!(fq_from_bytes(&bytes), Err(ConvertError::NonCanonicalField));
         bytes = fq_to_bytes(&Fq::from(7u64));
         assert_eq!(fq_from_bytes(&bytes).unwrap(), Fq::from(7u64));
         assert_eq!(
-            fr_from_bytes(&solana_groth16_verify::constants::FR_MODULUS),
+            fr_from_bytes(&[0xff; FR_SIZE]),
             Err(ConvertError::NonCanonicalField)
         );
     }
 
-    /// The verifier enforces the same coordinate rule as this decoder, so
-    /// nothing the verifier accepts is something the converter refuses — and
-    /// the flag-bit encodings the syscall would honor are refused by both.
+    /// Both entry points reject non-canonical coordinates before curve checks.
     #[test]
     fn verifier_and_converter_agree_on_coordinate_canonicity() {
-        use solana_groth16_verify::{constants::FQ_MODULUS, point, Groth16Error, Proof};
-        assert_eq!(Fq::MODULUS.to_bytes_be(), FQ_MODULUS);
+        use solana_groth16_verify::{point, Groth16Error, Proof};
 
         let g = g1_to_bytes(&G1Projective::generator().into_affine());
         let h = g2_to_bytes(&G2Projective::generator().into_affine());

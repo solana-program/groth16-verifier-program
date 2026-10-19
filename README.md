@@ -83,10 +83,9 @@ point on-chain costs 13,610 CU, more than a sixth of an entire verification.
 | `G2`       | 128   | `x ‖ y`; the identity is all zeros          |
 | `Fr`       | 32    | big-endian, canonical (`< r`)               |
 
-Every coordinate must be `< p`, and the program checks it rather than leaving
-it to the syscall, which honors arkworks' serialization flags in the top two
-bits of `y` and so would take some out-of-range bytes as the identity, or as
-a second encoding of a valid point. See `docs/design.md §6`.
+The program checks every coordinate is `< p` before proof verification or key
+publication. See [the coordinate-range rationale](docs/design.md#what-the-syscall-does-not-check-coordinate-range)
+for why the syscall alone does not enforce canonical encodings.
 
 ### Proof
 

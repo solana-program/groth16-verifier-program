@@ -19,10 +19,8 @@ pub enum Groth16Error {
     /// A public input is not a canonical scalar (`≥ r`).
     NonCanonicalScalar,
     /// A proof or key point has a coordinate that is not a canonical base-field
-    /// element (`≥ p`). The syscall accepts some of these — it reads arkworks'
-    /// serialization flags from the top bits of `y`, including a non-zero
-    /// encoding of the identity — so they are rejected before any syscall;
-    /// see `point`.
+    /// element (`≥ p`). Rejected before any syscall; see the coordinate-range
+    /// explanation in the `point` module.
     NonCanonicalCoordinate,
     /// A group-operation syscall rejected its input: a point is not on the
     /// curve or not in the prime-order subgroup, or the input was malformed.
