@@ -77,11 +77,16 @@ point on-chain costs 13,610 CU, more than a sixth of an entire verification.
 
 | Element    | Size  | Encoding                                    |
 | ---------- | ----- | ------------------------------------------- |
-| `Fq`       | 32    | big-endian                                  |
+| `Fq`       | 32    | big-endian, canonical (`< p`)               |
 | `Fq2`      | 64    | `c1 ‖ c0`, matching the syscall's field order |
-| `G1`       | 64    | `x ‖ y`                                     |
-| `G2`       | 128   | `x ‖ y`                                     |
+| `G1`       | 64    | `x ‖ y`; the identity is all zeros          |
+| `G2`       | 128   | `x ‖ y`; the identity is all zeros          |
 | `Fr`       | 32    | big-endian, canonical (`< r`)               |
+
+Every coordinate must be `< p`, and the program checks it rather than leaving
+it to the syscall, which honors arkworks' serialization flags in the top two
+bits of `y` and so would take some out-of-range bytes as the identity, or as
+a second encoding of a valid point. See `docs/design.md §6`.
 
 ### Proof
 
@@ -385,7 +390,8 @@ Returns `Ok(())` when the proof verifies. Verification and layout failures
 surface as `ProgramError::Custom(code)` with stable codes (see
 [program/src/error.rs](program/src/error.rs)): `6` is "well-formed proof that
 does not verify", `5` is "a proof point failed the curve or subgroup check",
-`3` is a public-input count mismatch, `4` a non-canonical scalar. Account-level
+`3` is a public-input count mismatch, `4` a non-canonical scalar, `9` a proof
+coordinate `≥ p`. Account-level
 failures use the standard variants (`InvalidAccountOwner`, `InvalidArgument`
 for a wrong account count).
 
@@ -404,20 +410,20 @@ end-to-end under Mollusk (`make cu`), random public inputs:
 
 | `n` | Syscall floor | `Verify` end-to-end | Overhead |
 | --- | ------------- | ------------------- | -------- |
-| 0   | 73,612        | 74,005              | 393      |
-| 1   | 77,786        | 78,397              | 611      |
-| 2   | 81,960        | 82,762              | 802      |
-| 8   | 106,996       | 108,952             | 1,956    |
-| 16  | 140,396       | 143,872             | 3,476    |
-| 32  | 207,180       | 213,712             | 6,532    |
+| 0   | 73,612        | 74,091              | 479      |
+| 1   | 77,786        | 78,483              | 697      |
+| 2   | 81,960        | 82,848              | 888      |
+| 8   | 106,996       | 109,038             | 2,042    |
+| 16  | 140,396       | 143,966             | 3,570    |
+| 32  | 207,180       | 213,798             | 6,618    |
 
 The floor is `73,612 + 4,174·n` (one 4-pair pairing, one G1 multiply and one
-G1 add per input). Everything above it is SBF: about 400 CU fixed — entrypoint,
-account checks, buffer assembly, result decode — plus about 190 per public
-input. Reading the key from an account measures no more expensive than reading
+G1 add per input). Everything above it is SBF: about 480 CU fixed — entrypoint,
+account checks, the proof's coordinate range check, buffer assembly, result
+decode — plus about 190 per public input. Reading the key from an account measures no more expensive than reading
 it from instruction data. Inputs equal to `0` or `1` skip the multiply, and a
 term whose `ICᵢ` is the identity (an unused public input) is skipped entirely:
-with all eight inputs zero, `n = 8` verifies in 74,265 CU.
+with all eight inputs zero, `n = 8` verifies in 74,351 CU.
 
 The pairing dominates for small circuits — 95% of the cost at `n = 1`. The MSM
 overtakes it past roughly 18 public inputs. Full derivation, the measurement
@@ -428,14 +434,14 @@ methodology, and the stage-by-stage tables are in
 
 | Test                                       | What it covers                                                     |
 | ------------------------------------------ | ------------------------------------------------------------------ |
-| `solana-groth16-verify` unit tests                | Scalar comparisons, key length inference, account header round-trips |
-| `groth16-convert` unit tests + `groth16-verify/tests/gnark_fixture.rs` | Point encoding round-trips, gnark decompression of both roots and the identity, and the fixture parsed from both compressed and raw encodings, verified by arkworks and by the verifier's host path |
+| `solana-groth16-verify` unit tests                | Scalar and coordinate range checks, flag-bit encodings rejected by proof construction and publish validation, key length inference, account header round-trips |
+| `groth16-convert` unit tests + `groth16-verify/tests/gnark_fixture.rs` | Point encoding round-trips, the converter and the verifier agreeing on which encodings are canonical, gnark decompression of both roots and the identity, and the fixture parsed from both compressed and raw encodings, verified by arkworks and by the verifier's host path |
 | `program/tests/walkthrough.rs`             | The [Registration](#registration) example end to end, every transaction a real message: `create_staging` atomically, chunked `write_body`, `Publish` with refund, the user recomputing the address from the distributed key, the consumer pinning the address and verifying |
 | `program/tests/gnark.rs`                   | The gnark fixture registered through the real instruction flow and verified on SBF; wrong input, tampered proof, wrong input count and non-canonical scalar each rejected with the right code |
 | `program/tests/arkworks.rs`                | Fresh random arkworks setups and proofs every run for `n ∈ {0, 1, 2, 5, 8}`; inputs of exactly `0` and `1` through the skip paths; a proof under the wrong key |
 | `solana-groth16-verify` unit tests (`verifier.rs`) | The identity cases from `docs/design.md §10` on the host path: `L` at the identity by cancellation and by zero `IC₀` with zero inputs, an intermediate identity with a nonzero `L`, identity `ICᵢ` terms, and the pairing decoding an identity `L` |
-| `program/tests/registry.rs`                | Every registration guarantee from `docs/design.md §2`: pre-funded target, payer ≠ authority, non-canonical bump, body/address mismatch, address checked before points, invalid and identity points, republish, a published key handed to every staging instruction and left byte-for-byte intact, `create_account ‖ InitializeStaging` succeeding and rolling back as one transaction, a staging account refused as its own authority by every instruction, `Publish` without the system program, identity `IC₀` published and verified against, `n = 151` and `n = 152`, `Write` bounds, staging authority, `Verify` account checks |
-| `program/tests/malformed.rs`               | Every early-rejection path: unknown tag, empty data, short proof, key account length/header mismatch, missing signers, wrong owners, read-only accounts, short payloads, uninitialized staging, wrong publisher |
+| `program/tests/registry.rs`                | Every registration guarantee from `docs/design.md §2`: pre-funded target, payer ≠ authority, non-canonical bump, body/address mismatch, address checked before points, invalid, identity and flag-bit-encoded points, republish, a published key handed to every staging instruction and left byte-for-byte intact, `create_account ‖ InitializeStaging` succeeding and rolling back as one transaction, a staging account refused as its own authority by every instruction, `Publish` without the system program, identity `IC₀` published and verified against, `n = 151` and `n = 152`, `Write` bounds, staging authority, `Verify` account checks |
+| `program/tests/malformed.rs`               | Every early-rejection path: unknown tag, empty data, short proof, proof coordinates out of range or carrying flag bits, key account length/header mismatch, missing signers, wrong owners, read-only accounts, short payloads, uninitialized staging, wrong publisher |
 | `program/tests/cu.rs`                      | The CU breakdown from `docs/cu-budget.md`, asserting every stage delta is at or above its syscall floor |
 
 The SBF tests skip unless `SBF_OUT_DIR` is set; `make test` builds the

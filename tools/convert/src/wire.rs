@@ -319,6 +319,41 @@ mod tests {
         );
     }
 
+    /// The verifier enforces the same coordinate rule as this decoder, so
+    /// nothing the verifier accepts is something the converter refuses — and
+    /// the flag-bit encodings the syscall would honor are refused by both.
+    #[test]
+    fn verifier_and_converter_agree_on_coordinate_canonicity() {
+        use solana_groth16_verify::{constants::FQ_MODULUS, point, Groth16Error, Proof};
+        assert_eq!(Fq::MODULUS.to_bytes_be(), FQ_MODULUS);
+
+        let g = g1_to_bytes(&G1Projective::generator().into_affine());
+        let h = g2_to_bytes(&G2Projective::generator().into_affine());
+        for bit in [0x40u8, 0x80] {
+            let mut g = g;
+            g[FQ_SIZE] |= bit;
+            assert_eq!(g1_from_bytes(&g), Err(ConvertError::NonCanonicalField));
+            assert!(!point::g1_is_canonical(&g));
+
+            let mut h = h;
+            h[2 * FQ_SIZE] |= bit;
+            assert_eq!(g2_from_bytes(&h), Err(ConvertError::NonCanonicalField));
+            assert!(!point::g2_is_canonical(&h));
+
+            let mut proof = OnChainProof::new(
+                &G1Projective::generator().into_affine(),
+                &G2Projective::generator().into_affine(),
+                &G1Projective::generator().into_affine(),
+            );
+            proof.0[G1_SIZE + 2 * FQ_SIZE] |= bit;
+            assert_eq!(proof.elements(), Err(ConvertError::NonCanonicalField));
+            assert_eq!(
+                Proof::from_bytes(&proof.0).err(),
+                Some(Groth16Error::NonCanonicalCoordinate)
+            );
+        }
+    }
+
     #[test]
     fn publish_validation_matches_key_point_rules() {
         use solana_groth16_verify::Groth16Error;
@@ -340,11 +375,20 @@ mod tests {
                 Err(Groth16Error::IdentityKeyElement)
             );
         }
-        // Both the pairing-validated IC₀ and addition-validated IC₁ must decode.
+        // Both the pairing-validated IC₀ and addition-validated IC₁ must decode:
+        // `(1, 1)` has canonical coordinates but is not on the curve.
         for offset in [VK_IC_OFFSET, VK_IC_OFFSET + G1_SIZE] {
             let mut bad = key.clone();
-            bad.body[offset..offset + G1_SIZE].fill(0xff);
+            bad.body[offset..offset + G1_SIZE].fill(0);
+            bad.body[offset + FQ_SIZE - 1] = 1;
+            bad.body[offset + G1_SIZE - 1] = 1;
             assert_eq!(bad.validate_for_publish(), Err(Groth16Error::InvalidPoint));
+            // Out-of-range coordinates never reach the syscall at all.
+            bad.body[offset..offset + G1_SIZE].fill(0xff);
+            assert_eq!(
+                bad.validate_for_publish(),
+                Err(Groth16Error::NonCanonicalCoordinate)
+            );
         }
         // A point on the twist outside G2's prime-order subgroup must fail too.
         let outside = (0u64..)

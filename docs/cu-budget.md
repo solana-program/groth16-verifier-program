@@ -233,30 +233,30 @@ out low by `R`.
 
 ```text
 inputs      n    M(∅)     M(0)     M(1)     M(2)     M(3)     M(4)      E2E
-random      0     102      238      409      378    74029    74166    74005
-random      1     102      238      409     4770    74029    78558    78397
-random      2     102      238      409     9135    74029    82923    82762
-random      4     102      238      409    17865    74029    91653    91492
-random      8     102      238      409    35325    74029   109113   108952
-random     16     102      238      409    70245    74029   144033   143872
-random     32     102      238      409   140085    74029   213873   213712
-all zero    8     102      238      409      638    74029    74426    74265
-all one     8     102      238      409     4317    74029    78105    77944
+random      0     180      311      483      453    74102    74239    74091
+random      1     180      311      483     4845    74102    78631    78483
+random      2     180      311      483     9210    74102    82996    82848
+random      4     180      311      483    17940    74102    91726    91578
+random      8     180      311      483    35400    74102   109186   109038
+random     16     180      311      483    70328    74102   144114   143966
+random     32     180      311      483   140160    74102   213946   213798
+all zero    8     180      311      483      713    74102    74499    74351
+all one     8     180      311      483     4392    74102    78178    78030
 ```
 
 Derived:
 
 ```text
 inputs      n      R     S_msm assemble      MSM  pairing      core  overhead  plumbing
-random      0    136         0      171      140    73791     73928       316       -25
-random      1    136      4174      171     4532    73791     78320       534       -25
-random      2    136      8348      171     8897    73791     82685       725       -25
-random      4    136     16696      171    17627    73791     91415      1107       -25
-random      8    136     33392      171    35087    73791    108875      1871       -25
-random     16    136     66784      171    70007    73791    143795      3399       -25
-random     32    136    133568      171   139847    73791    213635      6455       -25
-all zero    8    136         0      171      400    73791     74188       576       -25
-all one     8    136      2672      171     4079    73791     77867      1583       -25
+random      0    131         0      172      142    73791     73928       316       -17
+random      1    131      4174      172     4534    73791     78320       534       -17
+random      2    131      8348      172     8899    73791     82685       725       -17
+random      4    131     16696      172    17629    73791     91415      1107       -17
+random      8    131     33392      172    35089    73791    108875      1871       -17
+random     16    131     66784      172    70017    73791    143803      3407       -17
+random     32    131    133568      172   139849    73791    213635      6455       -17
+all zero    8    131         0      172      402    73791     74188       576       -17
+all one     8    131      2672      172     4081    73791     77867      1583       -17
 ```
 
 What the numbers say:
@@ -272,20 +272,27 @@ What the numbers say:
   at a time; a byte-wise loop was cheap on random input and cost about 60 CU
   per all-zero input, and the unrolled compare the compiler emits for a fixed
   array was the reverse.
-- **The real `Verify` is 25 CU *cheaper* than the bench's core path.** The
+- **The dispatch baseline is 180, of which about 80 is the proof's coordinate
+  range check** (`Proof::from_bytes`, eight 32-byte compares; see
+  [design.md §6](design.md#6-what-the-syscall-already-checks)). It is in
+  `M(∅)` and so in every `M(t)`, which is why it does not show in the stage
+  deltas; it shows in the end-to-end column, where it is 0.1% of `n = 0`.
+- **The real `Verify` is 17 CU *cheaper* than the bench's core path.** The
   "plumbing" row is `E2E − (M(4) − R)`, and it comes out slightly negative: the
   bench reaches the same core call by parsing `n`, the key body, the proof, the
   inputs and `L` out of instruction data with a bounds check at each split (all
-  of which is inside `M(∅) = 102` together with the entrypoint), while the
+  of which is inside `M(∅) = 180` together with the entrypoint and the
+  coordinate check), while the
   program gets there by an owner compare, a discriminator byte, one length
   check and a slice of account data. Those two paths cost about the same, and
   the account path is marginally shorter. Reading the key from an account
   therefore costs nothing relative to reading it from instruction data — the
   question the row was there to answer.
-- **Total SBF overhead is `~320 + ~190·n`**, i.e. 0.4% of the total at `n = 0`
-  and 3.0% at `n = 32`. The rest is syscalls at fixed prices.
+- **Total SBF overhead is `~480 + ~190·n`** end to end (`~320 + ~190·n`
+  inside core, plus the dispatch baseline), i.e. 0.6% of the total at `n = 0`
+  and 3.1% at `n = 32`. The rest is syscalls at fixed prices.
 
-The cost model's two checks hold: `pairing − assemble = 73,620 ≥ 73,612`, and
+The cost model's two checks hold: `pairing − assemble = 73,619 ≥ 73,612`, and
 the MSM stage exceeds `S_msm` by a small positive amount in every row, including
 the all-zero and all-one rows where `S_msm` is far below `4,174n`.
 

@@ -18,6 +18,12 @@ pub enum Groth16Error {
     PublicInputCountMismatch,
     /// A public input is not a canonical scalar (`≥ r`).
     NonCanonicalScalar,
+    /// A proof or key point has a coordinate that is not a canonical base-field
+    /// element (`≥ p`). The syscall accepts some of these — it reads arkworks'
+    /// serialization flags from the top bits of `y`, including a non-zero
+    /// encoding of the identity — so they are rejected before any syscall;
+    /// see `point`.
+    NonCanonicalCoordinate,
     /// A group-operation syscall rejected its input: a point is not on the
     /// curve or not in the prime-order subgroup, or the input was malformed.
     /// On the verification path this means `A`, `B` or `C` is invalid — the

@@ -313,6 +313,33 @@ The verifying key's points are validated once, at `Publish`, so a malformed key
 can never reach the hot path — and a key that passes `Publish` is pinned by its
 address forever.
 
+### What the syscall does not check: coordinate range
+
+The one check the program *does* make on every point, on both paths, is that
+each coordinate is below the base-field modulus `p`. `solana-bn254` takes
+all-zero bytes as the identity and hands anything else to arkworks'
+uncompressed decoding, which reads two serialization-flag bits from the
+most significant byte of `y` — byte 32 of a G1 point, byte 64 of a G2 point —
+before it looks at the coordinates. With the `0x40` bit set it returns the
+identity whatever `x` holds, without touching the curve equation; with `0x80`
+set it strips the bit and decodes the point normally, so every point has a
+second encoding. Neither bit is part of the syscall's documented format, and
+the program's all-zero identity tests see neither: an `α` with the infinity
+flag set is not all zeros, passes the identity check, and is then accepted by
+the pairing syscall as the identity. The agave syscall runs this same crate,
+so the host and on-chain paths agree.
+
+Both bits put the coordinate at or above `2^254`, and `p < 2^254`, so
+requiring every coordinate to be `< p` rejects both, and leaves each point
+exactly one encoding — the one `groth16-convert` produces and the one the
+converter's own decoder accepts, so the two agree on what is canonical and a
+key has exactly one body and one address. `Proof::from_bytes` makes the check
+on `A`, `B` and `C` (eight 32-byte compares, with their own error code) and
+`validate_for_publish` makes it over the whole body ahead of the identity
+tests that depend on it. This is cheap enough that the argument above against
+re-validation does not apply: about 80 CU of compares per proof, not a
+deserialization.
+
 Not every `alt_bn128` opcode validates equally, and `Publish` has to pick the
 ones that do. In `solana-bn254`, G1 and G2 conversions through
 `TryFrom<PodG1>`/`TryFrom<PodG2>` use `Validate::Yes` — that is the pairing path
@@ -398,9 +425,12 @@ coverage rather than reasoning:
 - **Point at infinity.** The syscalls encode the identity as all-zero bytes
   (`PodG1`/`PodG2::try_from` in `solana-bn254` special-case it before
   deserializing), which is *not* arkworks' own uncompressed encoding — arkworks
-  uses a flag bit. The converter must map between the two. An `ICᵢ` at infinity
-  is legal in a verifying key and `Publish` accepts it; `α`, `−β`, `−γ`, `−δ`
-  at infinity make the equation degenerate and are rejected.
+  uses a flag bit, and the syscall still honors that bit on bytes that are
+  not all zero (§6). The converter must map between the two, and the program
+  must range-check coordinates before testing for the identity. An `ICᵢ` at
+  infinity is legal in a verifying key and `Publish` accepts it; `α`, `−β`,
+  `−γ`, `−δ` at infinity make the equation degenerate and are rejected, in
+  either encoding.
 - **`L` at the identity.** `L = IC₀ + Σ aᵢ·ICᵢ` is the identity whenever the
   sum cancels, and cancellation is not exotic: `Σ aᵢ·ICᵢ = −IC₀` with all
   terms nonzero does it, as does `IC₀` itself being the identity with all
