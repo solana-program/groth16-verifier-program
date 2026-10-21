@@ -173,6 +173,19 @@ fn invalid_points_in_the_body_are_rejected() {
     let mut body = key.body().to_vec();
     body[..64].fill(0);
     assert_custom_error(&publish_corrupted(body), code::IDENTITY_KEY_ELEMENT);
+
+    // α with arkworks' infinity flag in the top byte of `y`: not all-zero,
+    // so the identity test alone would miss it, and the syscall would decode
+    // it as the identity. The coordinate range check catches it first.
+    let mut body = key.body().to_vec();
+    body[32] |= 0x40;
+    assert_custom_error(&publish_corrupted(body), code::NON_CANONICAL_COORDINATE);
+
+    // −δ with the negative flag: the same point under a second encoding,
+    // which would give one key two bodies and two addresses.
+    let mut body = key.body().to_vec();
+    body[320 + 64] |= 0x80;
+    assert_custom_error(&publish_corrupted(body), code::NON_CANONICAL_COORDINATE);
 }
 
 #[test]

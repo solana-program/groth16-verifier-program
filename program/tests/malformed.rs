@@ -6,13 +6,14 @@ mod common;
 
 use {
     common::{
-        assert_custom_error, assert_program_error, circuit::Instance, code, harness, Harness,
-        SYSTEM_PROGRAM_ID,
+        assert_custom_error, assert_program_error, assert_success, circuit::Instance, code,
+        harness, Harness, SYSTEM_PROGRAM_ID,
     },
     mollusk_svm::program::keyed_account_for_system_program,
     solana_account::Account,
     solana_address::Address,
     solana_groth16_verify::{
+        constants::FQ_MODULUS,
         instruction as ix,
         state::{staging_account_len, write_staging_header, StagingHeader, STAGING_HEADER_LEN},
     },
@@ -88,6 +89,35 @@ fn verify_rejects_short_proofs_and_wrong_account_counts() {
     assert_program_error(
         &h.mollusk.process_instruction(&none, &[]),
         ProgramError::InvalidArgument,
+    );
+}
+
+/// A proof point whose `y` carries one of arkworks' serialization-flag bits
+/// is not in the wire format even though the syscall would take it (`0x40`
+/// as the identity, `0x80` as the unflagged point). Rejected before any
+/// syscall, with its own code.
+#[test]
+fn verify_rejects_non_canonical_proof_coordinates() {
+    let Some(h) = harness() else { return };
+    let inst = Instance::random(1);
+    let key = h.register(&inst.key);
+    assert_success(&h.verify(&key, &inst.proof.0, &inst.input_bytes));
+
+    // The top byte of `y` in A, B (that of `y.c1`) and C.
+    for (offset, bit) in [(32, 0x40), (32, 0x80), (128, 0x40), (224, 0x80)] {
+        let mut proof = inst.proof.0;
+        proof[offset] |= bit;
+        assert_custom_error(
+            &h.verify(&key, &proof, &inst.input_bytes),
+            code::NON_CANONICAL_COORDINATE,
+        );
+    }
+    // Exactly `p`, with no flag bit involved.
+    let mut proof = inst.proof.0;
+    proof[224..256].copy_from_slice(&FQ_MODULUS);
+    assert_custom_error(
+        &h.verify(&key, &proof, &inst.input_bytes),
+        code::NON_CANONICAL_COORDINATE,
     );
 }
 

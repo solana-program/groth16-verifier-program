@@ -32,6 +32,11 @@
 //! They establish that the bytes are a Groth16 key for which the verifier is
 //! sound, and nothing more.
 //!
+//! [`Proof::from_bytes`] range-checks every coordinate of `A`, `B` and `C`;
+//! [`VerifyingKey::validate_for_publish`] does the same for the whole key
+//! before its identity tests. See [`point`] for why the syscall alone does
+//! not enforce canonical coordinate encodings.
+//!
 //! **Provenance.** Whether the key is *the right key* — produced by the trusted
 //! setup for the intended circuit, rather than for a circuit with no
 //! constraints — is a property of the setup, not of the bytes, and no on-chain
@@ -82,6 +87,8 @@ pub mod instruction;
 
 pub use tag::Tag;
 
+#[cfg(feature = "verify")]
+pub mod point;
 #[cfg(feature = "verify")]
 mod proof;
 #[cfg(feature = "verify")]

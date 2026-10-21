@@ -1,7 +1,7 @@
 //! Error surface of the program. Three kinds of failure, told apart by how
 //! they are reported:
 //!
-//! - **Verification and layout** (`Custom(0..=8)`): every [`Groth16Error`]
+//! - **Verification and layout** (`Custom(0..=9)`): every [`Groth16Error`]
 //!   from [`solana_groth16_verify`], mapped one-to-one by [`map_groth16`], so a
 //!   CPI caller can tell "proof did not verify" (`6`) apart from "malformed
 //!   input" (the rest).
@@ -23,7 +23,7 @@ use {pinocchio::error::ProgramError, solana_groth16_verify::Groth16Error};
 
 /// Custom error codes. Stable; append only.
 ///
-/// `0..=8` mirror [`Groth16Error`] variant for variant; `100..` are the
+/// `0..=9` mirror [`Groth16Error`] variant for variant; `100..` are the
 /// registry's own. The gap keeps the two ranges from ever colliding as either
 /// grows.
 #[repr(u32)]
@@ -39,6 +39,7 @@ pub enum Groth16ProgramError {
     ProofInvalid = 6,
     InvalidAccountData = 7,
     WrongDiscriminator = 8,
+    NonCanonicalCoordinate = 9,
 
     // --- Registry semantics, this program's own ---------------------------------
     /// The supplied key account is not the canonical address for the staged
@@ -73,6 +74,7 @@ pub fn map_groth16(e: Groth16Error) -> ProgramError {
         Groth16Error::ProofInvalid => P::ProofInvalid,
         Groth16Error::InvalidAccountData => P::InvalidAccountData,
         Groth16Error::WrongDiscriminator => P::WrongDiscriminator,
+        Groth16Error::NonCanonicalCoordinate => P::NonCanonicalCoordinate,
         Groth16Error::IdentityKeyElement => P::IdentityKeyElement,
     };
     code.into()
@@ -96,6 +98,7 @@ mod tests {
             (Groth16Error::ProofInvalid, 6),
             (Groth16Error::InvalidAccountData, 7),
             (Groth16Error::WrongDiscriminator, 8),
+            (Groth16Error::NonCanonicalCoordinate, 9),
             (Groth16Error::IdentityKeyElement, 104),
         ];
         for (error, code) in table {

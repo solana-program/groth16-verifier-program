@@ -45,6 +45,7 @@ pub mod code {
     pub const PROOF_INVALID: u32 = 6;
     pub const INVALID_ACCOUNT_DATA: u32 = 7;
     pub const WRONG_DISCRIMINATOR: u32 = 8;
+    pub const NON_CANONICAL_COORDINATE: u32 = 9;
     pub const KEY_ADDRESS_MISMATCH: u32 = 100;
     pub const KEY_ALREADY_PUBLISHED: u32 = 101;
     pub const STAGING_SIZE_MISMATCH: u32 = 102;

@@ -18,6 +18,10 @@ pub enum Groth16Error {
     PublicInputCountMismatch,
     /// A public input is not a canonical scalar (`≥ r`).
     NonCanonicalScalar,
+    /// A proof or key point has a coordinate that is not a canonical base-field
+    /// element (`≥ p`). Rejected before any syscall; see the coordinate-range
+    /// explanation in the `point` module.
+    NonCanonicalCoordinate,
     /// A group-operation syscall rejected its input: a point is not on the
     /// curve or not in the prime-order subgroup, or the input was malformed.
     /// On the verification path this means `A`, `B` or `C` is invalid — the
